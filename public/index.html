@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>おえかきモーション - 体感型知育P2Pゲーム</title>
+  
+  <!-- Modern Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="style.css">
+
+  <!-- CDN Libraries -->
+  <!-- MediaPipe Selfie Segmentation -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+  
+  <!-- MediaPipe Pose -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
+  <!-- Matter.js Physics Engine -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js" crossorigin="anonymous"></script>
+
+  <!-- PeerJS (WebRTC P2P) -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <!-- QRCode.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- ================= PC VIEW ================= -->
+    <div id="pc-view" class="view-container">
+      <!-- Control Bar Header -->
+      <header class="game-header">
+        <div class="header-left">
+          <div class="brand">
+            <span class="brand-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+            <div class="brand-text">
+              <h1>おえかきモーション</h1>
+              <span class="brand-tag">WebRTC P2P × Motion Physics</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-center">
+          <!-- Game Stats -->
+          <div class="stat-badge score-badge">
+            <span class="stat-label"><i class="fa-solid fa-star"></i> SCORE</span>
+            <span id="score-display" class="stat-value">0</span>
+          </div>
+
+          <div class="stat-badge timer-badge">
+            <span class="stat-label"><i class="fa-solid fa-stopwatch"></i> TIME</span>
+            <span id="timer-display" class="stat-value">60</span><span class="stat-unit">s</span>
+          </div>
+        </div>
+
+        <div class="header-right">
+          <!-- Main Controls -->
+          <div class="control-group">
+            <button id="btn-start" class="btn btn-primary"><i class="fa-solid fa-play"></i> スタート</button>
+            <button id="btn-stop" class="btn btn-warning" disabled><i class="fa-solid fa-pause"></i> パーズ</button>
+            <button id="btn-reset" class="btn btn-danger"><i class="fa-solid fa-rotate-left"></i> リセット</button>
+          </div>
+
+          <!-- Theme Switcher -->
+          <div class="theme-selector">
+            <button class="theme-btn active" data-theme="sea"><i class="fa-solid fa-water"></i> 🌊 海</button>
+            <button class="theme-btn" data-theme="grass"><i class="fa-solid fa-tree"></i> 🌿 草原</button>
+            <button class="theme-btn" data-theme="space"><i class="fa-solid fa-user-astronaut"></i> 🚀 宇宙</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Main Game Canvas Container -->
+      <main class="game-main">
+        <div class="canvas-wrapper">
+          <canvas id="game-canvas"></canvas>
+
+          <!-- Hidden Webcam Video Element -->
+          <video id="webcam-video" playsinline style="display: none;"></video>
+
+          <!-- Player Legend overlay -->
+          <div class="players-overlay">
+            <div class="player-tag p1"><span class="p-dot"></span> P1</div>
+            <div class="player-tag p2"><span class="p-dot"></span> P2</div>
+            <div class="player-tag p3"><span class="p-dot"></span> P3</div>
+            <div class="player-tag p4"><span class="p-dot"></span> P4</div>
+          </div>
+
+          <!-- Active Theme Toast Notification -->
+          <div id="theme-toast" class="theme-toast">
+            <i id="theme-toast-icon" class="fa-solid fa-water"></i>
+            <span id="theme-toast-text">海モード (低重力・浮遊)</span>
+          </div>
+        </div>
+
+        <!-- Right Side Panel for QR Codes & P2P status -->
+        <aside class="side-panel">
+          <div class="qr-card score-qr-card">
+            <div class="qr-card-header">
+              <span class="qr-badge score-badge-pill">+100 点</span>
+              <h3><i class="fa-solid fa-mobile-screen-button"></i> 加点アイテム</h3>
+            </div>
+            <div class="qr-container">
+              <div id="qr-score" class="qr-code"></div>
+            </div>
+            <p class="qr-desc">スマホで撮影して加点アイテムを画面に投げ込もう！</p>
+          </div>
+
+          <div class="qr-card obstacle-qr-card">
+            <div class="qr-card-header">
+              <span class="qr-badge obstacle-badge-pill">-50 点</span>
+              <h3><i class="fa-solid fa-bomb"></i> お邪魔アイテム</h3>
+            </div>
+            <div class="qr-container">
+              <div id="qr-obstacle" class="qr-code"></div>
+            </div>
+            <p class="qr-desc">お邪魔罠アイテムを作って画面に投入！</p>
+          </div>
+
+          <!-- PeerJS Status -->
+          <div class="peer-status-card">
+            <div class="status-header">
+              <span class="status-indicator connected" id="peer-status-dot"></span>
+              <span class="status-text" id="peer-status-text">P2P 待機中...</span>
+            </div>
+            <div class="room-info">
+              <span>ROOM: </span><code id="room-id-display">--------</code>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <!-- Game Over Modal -->
+      <div id="modal-gameover" class="modal-backdrop">
+        <div class="modal-card">
+          <div class="modal-icon"><i class="fa-solid fa-trophy"></i></div>
+          <h2>GAME OVER</h2>
+          <div class="final-score-box">
+            <span class="final-score-label">FINAL SCORE</span>
+            <span id="final-score-value" class="final-score-val">0</span>
+          </div>
+          <p id="final-rank-msg">素晴らしい動きでした！</p>
+          <div class="modal-actions">
+            <button id="btn-modal-restart" class="btn btn-primary btn-lg"><i class="fa-solid fa-rotate-left"></i> もう一度遊ぶ</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= MOBILE VIEW ================= -->
+    <div id="mobile-view" class="view-container" style="display: none;">
+      <header class="mobile-header">
+        <div id="mobile-mode-badge" class="mode-badge score-mode">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> 加点アイテム作成 (+100)
+        </div>
+        <div class="mobile-room-info">
+          <i class="fa-solid fa-wifi"></i> <span id="mobile-peer-status">PC接続完了</span>
+        </div>
+      </header>
+
+      <main class="mobile-main">
+        <!-- Camera Viewfinder -->
+        <div class="camera-wrapper">
+          <video id="mobile-video" autoplay playsinline muted></video>
+          <canvas id="crop-canvas" style="display: none;"></canvas>
+
+          <!-- Shape Overlay Mask on Viewfinder -->
+          <div id="shape-overlay-mask" class="shape-mask circle-mask"></div>
+        </div>
+
+        <!-- Frame Shape Controls -->
+        <div class="shape-selector">
+          <span class="shape-label">切り抜き形状:</span>
+          <button id="btn-shape-circle" class="shape-btn active" data-shape="circle">
+            <i class="fa-regular fa-circle"></i> 丸 (円形)
+          </button>
+          <button id="btn-shape-square" class="shape-btn" data-shape="square">
+            <i class="fa-regular fa-square"></i> 四角 (矩形)
+          </button>
+        </div>
+
+        <!-- Photo Capture / Preview Controls -->
+        <div class="mobile-actions">
+          <button id="btn-capture" class="btn btn-accent btn-xl"><i class="fa-solid fa-camera"></i> 写真を撮る</button>
+          <div id="preview-actions" class="preview-actions" style="display: none;">
+            <button id="btn-retake" class="btn btn-secondary"><i class="fa-solid fa-rotate-left"></i> 再撮影</button>
+            <button id="btn-send-item" class="btn btn-success btn-lg"><i class="fa-solid fa-paper-plane"></i> PCへ送信！</button>
+          </div>
+        </div>
+
+        <!-- Captured Preview Image Container -->
+        <div id="preview-container" class="preview-card" style="display: none;">
+          <h4>送信プレビュー</h4>
+          <div class="preview-img-wrapper">
+            <img id="preview-img" alt="Captured preview" />
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="main.js" type="module"></script>
+</body>
+</html>
