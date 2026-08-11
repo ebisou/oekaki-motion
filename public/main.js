@@ -116,8 +116,10 @@ class App {
     this.score = 0;
     this.timer = 60;
     this.timerInterval = null;
+    this.spawnerTimeout = null;
     this.isPlaying = false;
     this.currentTheme = 'sea'; // 'sea' | 'grass' | 'space'
+    this.customPhoneItems = []; // Queue for items sent from smartphones via PeerJS
     
     // PeerJS
     this.peer = null;
@@ -168,9 +170,6 @@ class App {
 
     // Initialize PeerJS Host
     this.initPCHostPeer();
-
-    // Spawn initial demo physics items for immediate playability
-    this.spawnDemoItems();
   }
 
   resizeCanvas() {
@@ -281,8 +280,8 @@ class App {
     const Body = Matter.Body;
 
     const x = Math.random() * (this.canvas.width - 200) + 100;
-    const y = 80;
-    const size = 60; // diameter or width
+    const y = -30; // Drop from above top edge
+    const size = 64; // diameter or width
 
     let body;
     if (shape === 'square') {
@@ -328,34 +327,79 @@ class App {
     World.add(this.physicsWorld, body);
   }
 
-  // Generate default canvas demo items if user hasn't sent phone photos yet
-  spawnDemoItems() {
-    const createDemoCanvas = (text, isScore) => {
-      const cvs = document.createElement('canvas');
-      cvs.width = 120;
-      cvs.height = 120;
-      const ctx = cvs.getContext('2d');
-      ctx.fillStyle = isScore ? '#00ff66' : '#ff007f';
-      ctx.beginPath();
-      ctx.arc(60, 60, 56, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.lineWidth = 6;
-      ctx.strokeStyle = '#ffffff';
-      ctx.stroke();
+  // Periodic Random Item Spawner
+  spawnRandomItem() {
+    if (!this.isPlaying) return;
+    if (this.physicsItems.length >= 8) return; // Prevent excessive item clutter
 
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 36px Outfit';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, 60, 60);
+    // 1. Priority: Phone photos sent via PeerJS
+    if (this.customPhoneItems && this.customPhoneItems.length > 0) {
+      const itemData = this.customPhoneItems.shift();
+      const isScore = itemData.mode === 'score';
+      this.spawnItem(itemData.imageData, isScore, itemData.shape || 'circle');
+      return;
+    }
 
-      return cvs.toDataURL();
+    // 2. Default Preset Items
+    const isScore = Math.random() < 0.75; // 75% score items, 25% obstacle items
+    const scoreEmojis = ['⭐', '💎', '🍎', '🍬', '🚀', '👑'];
+    const obstacleEmojis = ['💣', '👾', '👻', '⚡', '💀'];
+    const emojiList = isScore ? scoreEmojis : obstacleEmojis;
+    const text = emojiList[Math.floor(Math.random() * emojiList.length)];
+    const shape = Math.random() < 0.5 ? 'circle' : 'square';
+
+    const textureUrl = this.createPresetTexture(text, isScore);
+    this.spawnItem(textureUrl, isScore, shape);
+  }
+
+  createPresetTexture(text, isScore) {
+    const cvs = document.createElement('canvas');
+    cvs.width = 120;
+    cvs.height = 120;
+    const ctx = cvs.getContext('2d');
+    ctx.fillStyle = isScore ? '#00ff66' : '#ff007f';
+    ctx.beginPath();
+    ctx.arc(60, 60, 56, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 44px Outfit';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 60, 62);
+
+    return cvs.toDataURL();
+  }
+
+  startItemSpawner() {
+    this.stopItemSpawner();
+
+    // Drop initial item immediately on start
+    this.spawnRandomItem();
+
+    const scheduleNext = () => {
+      if (!this.isPlaying) return;
+      // Random delay between 1.5s and 2.8s
+      const delay = Math.random() * 1300 + 1500;
+      this.spawnerTimeout = setTimeout(() => {
+        if (this.isPlaying) {
+          this.spawnRandomItem();
+          scheduleNext();
+        }
+      }, delay);
     };
 
-    // Spawn 2 score items & 1 obstacle item
-    this.spawnItem(createDemoCanvas('⭐', true), true, 'circle');
-    this.spawnItem(createDemoCanvas('💎', true), true, 'circle');
-    this.spawnItem(createDemoCanvas('💣', false), false, 'circle');
+    scheduleNext();
+  }
+
+  stopItemSpawner() {
+    if (this.spawnerTimeout) {
+      clearTimeout(this.spawnerTimeout);
+      this.spawnerTimeout = null;
+    }
   }
 
   handleItemHit(item) {
@@ -376,13 +420,6 @@ class App {
     // Remove from physics world
     Matter.World.remove(this.physicsWorld, item);
     this.physicsItems = this.physicsItems.filter(i => i !== item);
-
-    // Respawn new item after short delay
-    setTimeout(() => {
-      if (this.isPlaying) {
-        this.spawnDemoItems();
-      }
-    }, 1500);
   }
 
   createScorePopup(x, y, points) {
@@ -471,8 +508,25 @@ class App {
         }
       }
 
-      // Update Matter.js Engine
-      Matter.Engine.update(this.physicsEngine, Math.min(delta, 33));
+      // Update Matter.js Engine and clean fallen items only when game is actively playing
+      if (this.isPlaying) {
+        Matter.Engine.update(this.physicsEngine, Math.min(delta, 33));
+
+        // Auto-remove items that fell past the floor or flew offscreen
+        const margin = 150;
+        this.physicsItems.forEach((body) => {
+          if (
+            body.position.y > this.canvas.height + margin ||
+            body.position.y < -margin * 2 ||
+            body.position.x < -margin ||
+            body.position.x > this.canvas.width + margin
+          ) {
+            Matter.World.remove(this.physicsWorld, body);
+            body.isDead = true;
+          }
+        });
+        this.physicsItems = this.physicsItems.filter(b => !b.isDead);
+      }
 
       // Draw Main Canvas
       this.drawCanvas();
@@ -733,11 +787,14 @@ class App {
     if (this.isPlaying) return;
     this.isPlaying = true;
 
-    document.getElementById('btn-start').disabled = true;
-    document.getElementById('btn-stop').disabled = false;
+    const btnStart = document.getElementById('btn-start');
+    const btnStop = document.getElementById('btn-stop');
+    btnStart.disabled = true;
+    btnStop.disabled = false;
 
     audio.init();
 
+    // 60s Countdown Timer
     this.timerInterval = setInterval(() => {
       this.timer--;
       document.getElementById('timer-display').textContent = this.timer;
@@ -746,11 +803,19 @@ class App {
         this.gameOver();
       }
     }, 1000);
+
+    // Start periodic item spawner
+    this.startItemSpawner();
   }
 
   stopGame() {
     this.isPlaying = false;
-    clearInterval(this.timerInterval);
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
+    this.stopItemSpawner();
+
     document.getElementById('btn-start').disabled = false;
     document.getElementById('btn-stop').disabled = true;
   }
@@ -762,10 +827,10 @@ class App {
     document.getElementById('score-display').textContent = '0';
     document.getElementById('timer-display').textContent = '60';
 
-    // Clear items and respawn demo
+    // Clear all items from physics world
     this.physicsItems.forEach(item => Matter.World.remove(this.physicsWorld, item));
     this.physicsItems = [];
-    this.spawnDemoItems();
+    this.customPhoneItems = [];
   }
 
   gameOver() {
@@ -826,8 +891,13 @@ class App {
 
       conn.on('data', (data) => {
         if (data && data.type === 'SPAWN_ITEM') {
-          const isScore = data.mode === 'score';
-          this.spawnItem(data.imageData, isScore, data.shape);
+          if (!this.customPhoneItems) this.customPhoneItems = [];
+          this.customPhoneItems.push(data);
+
+          // If game is actively playing, drop custom item immediately!
+          if (this.isPlaying) {
+            this.spawnRandomItem();
+          }
         }
       });
 
