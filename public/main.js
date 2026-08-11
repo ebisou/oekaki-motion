@@ -479,19 +479,25 @@ class App {
     const height = this.canvas.height;
     this.ctx.clearRect(0, 0, width, height);
 
-    // 1. Draw Theme Background / Selfie Segmentation composite
+    // 1. Draw Theme Background / Selfie Segmentation composite (Mirrored horizontally like a mirror)
     if (this.latestSegmentationResults && this.video && this.video.readyState >= 2) {
       // Draw background theme
       this.drawThemeBackground(width, height);
 
-      // Composite person mask
+      // Composite person mask (Horizontally flipped for mirror effect)
       this.ctx.save();
+      this.ctx.translate(width, 0);
+      this.ctx.scale(-1, 1);
       this.ctx.drawImage(this.latestSegmentationResults.segmentationMask, 0, 0, width, height);
       this.ctx.globalCompositeOperation = 'source-in';
       this.ctx.drawImage(this.video, 0, 0, width, height);
       this.ctx.restore();
     } else if (this.video && this.video.readyState >= 2) {
+      this.ctx.save();
+      this.ctx.translate(width, 0);
+      this.ctx.scale(-1, 1);
       this.ctx.drawImage(this.video, 0, 0, width, height);
+      this.ctx.restore();
     } else {
       this.drawThemeBackground(width, height);
     }
@@ -559,10 +565,14 @@ class App {
       if (poseIdx >= 4) return; // Up to 4 players
       const color = playerColors[poseIdx];
 
-      // Draw Joint Connectors
+      // Draw Joint Connectors inside mirrored canvas context
+      this.ctx.save();
+      this.ctx.translate(w, 0);
+      this.ctx.scale(-1, 1);
       if (window.drawConnectors && window.POSE_CONNECTIONS) {
         drawConnectors(this.ctx, landmarks, POSE_CONNECTIONS, { color: color, lineWidth: 4 });
       }
+      this.ctx.restore();
 
       // Key Sensor Landmarks (Left/Right Wrist, Left/Right Ankle, Nose)
       const sensorIndices = [15, 16, 27, 28, 0]; // Wrists, Ankles, Nose
@@ -570,7 +580,8 @@ class App {
       const World = Matter.World;
 
       landmarks.forEach((lm, idx) => {
-        const lx = lm.x * w;
+        // Compute mirrored screen coordinates: (1 - lm.x) * w
+        const lx = (1 - lm.x) * w;
         const ly = lm.y * h;
 
         // Draw Joint Point
@@ -579,7 +590,7 @@ class App {
         this.ctx.arc(lx, ly, 8, 0, Math.PI * 2);
         this.ctx.fill();
 
-        // If Key limb joint, attach physical sensor body for slapping items!
+        // If Key limb joint, attach physical sensor body at mirrored position for slapping items!
         if (sensorIndices.includes(idx)) {
           const sensor = Bodies.circle(lx, ly, 25, {
             isStatic: true,
