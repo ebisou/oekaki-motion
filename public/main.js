@@ -584,8 +584,15 @@ class App {
     if (this.latestPoseResults && (this.latestPoseResults.poseLandmarks || this.latestPoseResults.poseMultiLandmarks)) {
       const poses = this.latestPoseResults.poseMultiLandmarks || [this.latestPoseResults.poseLandmarks];
 
-      // Key Sensor Landmarks (Nose: 0, Wrists: 15,16, Index: 19,20, Ankles: 27,28, Toes: 31,32)
-      const sensorIndices = [0, 15, 16, 19, 20, 27, 28, 31, 32];
+      // Collision Targets: Head (Nose 0), Left Hand (Wrist 15), Right Hand (Wrist 16), Left Foot (Ankle 27), Right Foot (Ankle 28)
+      const targetLandmarks = [
+        { id: 0, label: 'head', radius: 45 },
+        { id: 15, label: 'hand_l', radius: 40 },
+        { id: 16, label: 'hand_r', radius: 40 },
+        { id: 27, label: 'foot_l', radius: 40 },
+        { id: 28, label: 'foot_r', radius: 40 }
+      ];
+
       const Bodies = Matter.Bodies;
       const World = Matter.World;
 
@@ -593,58 +600,64 @@ class App {
         if (poseIdx >= 4) return; // Up to 4 players
         const color = playerColors[poseIdx];
 
-        // Draw Joint Connectors inside mirrored canvas context
-        this.ctx.save();
-        this.ctx.translate(w, 0);
-        this.ctx.scale(-1, 1);
-        if (window.drawConnectors && window.POSE_CONNECTIONS) {
-          drawConnectors(this.ctx, landmarks, POSE_CONNECTIONS, { color: color, lineWidth: 4 });
-        }
-        this.ctx.restore();
+        targetLandmarks.forEach((target) => {
+          const lm = landmarks[target.id];
+          if (!lm || (lm.visibility !== undefined && lm.visibility < 0.3)) return;
 
-        landmarks.forEach((lm, idx) => {
           // Compute mirrored screen coordinates: (1 - lm.x) * w
           const lx = (1 - lm.x) * w;
           const ly = lm.y * h;
+          const r = target.radius;
+          const key = `P_${poseIdx}_${target.label}`;
 
-          // Draw Joint Point
+          activeSensorKeys.add(key);
+
+          // Update or create Matter.js physical sensor body
+          let sensor = this.sensorPool[key];
+          if (!sensor) {
+            sensor = Bodies.circle(lx, ly, r, {
+              isStatic: true,
+              isSensor: true,
+              label: key
+            });
+            sensor.isPlayerSensor = true;
+            this.sensorPool[key] = sensor;
+            World.add(this.physicsWorld, sensor);
+          } else {
+            Matter.Body.setPosition(sensor, { x: lx, y: ly });
+          }
+
+          // Draw ONLY collision range circle around Head, Hands, and Feet
+          this.ctx.save();
+
+          // Translucent fill showing collision area
           this.ctx.fillStyle = color;
+          this.ctx.globalAlpha = 0.25;
           this.ctx.beginPath();
-          this.ctx.arc(lx, ly, 8, 0, Math.PI * 2);
+          this.ctx.arc(lx, ly, r, 0, Math.PI * 2);
           this.ctx.fill();
 
-          // If Key limb joint, update/attach persistent physical sensor body
-          if (sensorIndices.includes(idx)) {
-            const key = `P_${poseIdx}_J_${idx}`;
-            activeSensorKeys.add(key);
+          // Neon glowing border
+          this.ctx.globalAlpha = 1.0;
+          this.ctx.strokeStyle = color;
+          this.ctx.lineWidth = 3;
+          this.ctx.shadowColor = color;
+          this.ctx.shadowBlur = 12;
+          this.ctx.stroke();
 
-            let sensor = this.sensorPool[key];
-            if (!sensor) {
-              sensor = Bodies.circle(lx, ly, 40, {
-                isStatic: true,
-                isSensor: true,
-                label: key
-              });
-              sensor.isPlayerSensor = true;
-              this.sensorPool[key] = sensor;
-              World.add(this.physicsWorld, sensor);
-            } else {
-              // Smoothly update static sensor body position in Matter.js world
-              Matter.Body.setPosition(sensor, { x: lx, y: ly });
-            }
+          // Center white indicator point
+          this.ctx.fillStyle = '#ffffff';
+          this.ctx.shadowBlur = 0;
+          this.ctx.beginPath();
+          this.ctx.arc(lx, ly, 6, 0, Math.PI * 2);
+          this.ctx.fill();
 
-            // Glowing aura on hands/feet
-            this.ctx.strokeStyle = color;
-            this.ctx.lineWidth = 3;
-            this.ctx.beginPath();
-            this.ctx.arc(lx, ly, 35, 0, Math.PI * 2);
-            this.ctx.stroke();
-          }
+          this.ctx.restore();
         });
       });
     }
 
-    // Move any inactive sensors offscreen so they don't trigger false collisions
+    // Hide any sensors that were not detected in this frame offscreen
     if (this.sensorPool) {
       Object.keys(this.sensorPool).forEach((key) => {
         if (!activeSensorKeys.has(key)) {
