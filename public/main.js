@@ -479,27 +479,45 @@ class App {
     const height = this.canvas.height;
     this.ctx.clearRect(0, 0, width, height);
 
-    // 1. Draw Theme Background / Selfie Segmentation composite (Mirrored horizontally like a mirror)
-    if (this.latestSegmentationResults && this.video && this.video.readyState >= 2) {
-      // Draw background theme
-      this.drawThemeBackground(width, height);
+    // 1. Draw Theme Background first
+    this.drawThemeBackground(width, height);
 
-      // Composite person mask (Horizontally flipped for mirror effect)
-      this.ctx.save();
-      this.ctx.translate(width, 0);
-      this.ctx.scale(-1, 1);
-      this.ctx.drawImage(this.latestSegmentationResults.segmentationMask, 0, 0, width, height);
-      this.ctx.globalCompositeOperation = 'source-in';
-      this.ctx.drawImage(this.video, 0, 0, width, height);
-      this.ctx.restore();
+    // 2. Draw Mirrored Person with Selfie Segmentation cut-out
+    if (this.latestSegmentationResults && this.video && this.video.readyState >= 2) {
+      if (!this.offscreenCanvas) {
+        this.offscreenCanvas = document.createElement('canvas');
+        this.offscreenCtx = this.offscreenCanvas.getContext('2d');
+      }
+      if (this.offscreenCanvas.width !== width || this.offscreenCanvas.height !== height) {
+        this.offscreenCanvas.width = width;
+        this.offscreenCanvas.height = height;
+      }
+
+      const oCtx = this.offscreenCtx;
+      oCtx.clearRect(0, 0, width, height);
+
+      // Draw mask & video mirrored onto offscreen canvas
+      oCtx.save();
+      oCtx.translate(width, 0);
+      oCtx.scale(-1, 1);
+      
+      // Draw segmentation mask (white silhouette on transparent canvas)
+      oCtx.drawImage(this.latestSegmentationResults.segmentationMask, 0, 0, width, height);
+      
+      // Crop video into silhouette
+      oCtx.globalCompositeOperation = 'source-in';
+      oCtx.drawImage(this.video, 0, 0, width, height);
+      oCtx.restore();
+
+      // Draw the mirrored person cut-out onto main canvas over theme background!
+      this.ctx.drawImage(this.offscreenCanvas, 0, 0, width, height);
     } else if (this.video && this.video.readyState >= 2) {
+      // Fallback: draw mirrored full video stream if segmentation not ready yet
       this.ctx.save();
       this.ctx.translate(width, 0);
       this.ctx.scale(-1, 1);
       this.ctx.drawImage(this.video, 0, 0, width, height);
       this.ctx.restore();
-    } else {
-      this.drawThemeBackground(width, height);
     }
 
     // 2. Draw 4-Player Pose Skeleton Landmarks & update physical hand/foot sensors
