@@ -199,7 +199,7 @@ class App {
     this.physicsWorld.gravity.y = 0.15; // Default Sea gravity
 
     this.physicsItems = [];
-    this.playerSensors = []; // Hand/Foot sensor bodies attached to MediaPipe landmarks
+    this.sensorPool = {}; // Persistent Pool of Hand/Foot sensor bodies attached to MediaPipe landmarks
 
     // Create boundaries
     this.updatePhysicsBoundaries();
@@ -398,16 +398,20 @@ class App {
 
   // Setup MediaPipe Selfie Segmentation & Pose
   setupMediaPipe() {
-    // 1. Selfie Segmentation Setup
+    this.isProcessingSegment = false;
+    this.isProcessingPose = false;
+
+    // 1. Selfie Segmentation Setup (modelSelection: 0 for fast general model)
     if (window.SelfieSegmentation) {
       this.segmentation = new SelfieSegmentation({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
       });
       this.segmentation.setOptions({
-        modelSelection: 1
+        modelSelection: 0
       });
       this.segmentation.onResults((results) => {
         this.latestSegmentationResults = results;
+        this.isProcessingSegment = false;
       });
     }
 
@@ -426,6 +430,7 @@ class App {
       });
       this.pose.onResults((results) => {
         this.latestPoseResults = results;
+        this.isProcessingPose = false;
       });
     }
 
@@ -439,7 +444,6 @@ class App {
         })
         .catch((err) => {
           console.warn("Camera access warning:", err);
-          // Start render loop even without camera (shows synth background & physics)
           this.startRenderLoop();
         });
     } else {
@@ -455,10 +459,16 @@ class App {
       const delta = now - lastTime;
       lastTime = now;
 
-      // Send video frames to MediaPipe if video is playing
+      // Send video frames to MediaPipe asynchronously without blocking/stacking WASM
       if (this.video && this.video.readyState >= 2) {
-        if (this.segmentation) this.segmentation.send({ image: this.video });
-        if (this.pose) this.pose.send({ image: this.video });
+        if (this.segmentation && !this.isProcessingSegment) {
+          this.isProcessingSegment = true;
+          this.segmentation.send({ image: this.video }).catch(() => { this.isProcessingSegment = false; });
+        }
+        if (this.pose && !this.isProcessingPose) {
+          this.isProcessingPose = true;
+          this.pose.send({ image: this.video }).catch(() => { this.isProcessingPose = false; });
+        }
       }
 
       // Update Matter.js Engine
@@ -496,6 +506,8 @@ class App {
       const oCtx = this.offscreenCtx;
       oCtx.clearRect(0, 0, width, height);
 
+      const frameImg = this.latestSegmentationResults.image || this.video;
+
       // Draw mask & video mirrored onto offscreen canvas
       oCtx.save();
       oCtx.translate(width, 0);
@@ -506,7 +518,7 @@ class App {
       
       // Crop video into silhouette
       oCtx.globalCompositeOperation = 'source-in';
-      oCtx.drawImage(this.video, 0, 0, width, height);
+      oCtx.drawImage(frameImg, 0, 0, width, height);
       oCtx.restore();
 
       // Draw the mirrored person cut-out onto main canvas over theme background!
@@ -520,10 +532,10 @@ class App {
       this.ctx.restore();
     }
 
-    // 2. Draw 4-Player Pose Skeleton Landmarks & update physical hand/foot sensors
+    // 3. Draw 4-Player Pose Skeleton Landmarks & update physical hand/foot sensors
     this.drawPoseLandmarks(width, height);
 
-    // 3. Draw Matter.js Physics Items
+    // 4. Draw Matter.js Physics Items
     this.drawPhysicsItems();
   }
 
@@ -567,67 +579,79 @@ class App {
 
   drawPoseLandmarks(w, h) {
     const playerColors = ['#00f3ff', '#ff007f', '#00ff66', '#ffe600'];
-    
-    // Clear previous sensor bodies
-    if (this.playerSensors && this.playerSensors.length > 0) {
-      this.playerSensors.forEach(sensor => Matter.World.remove(this.physicsWorld, sensor));
-      this.playerSensors = [];
-    }
+    const activeSensorKeys = new Set();
 
-    if (!this.latestPoseResults || !this.latestPoseResults.poseLandmarks) return;
+    if (this.latestPoseResults && (this.latestPoseResults.poseLandmarks || this.latestPoseResults.poseMultiLandmarks)) {
+      const poses = this.latestPoseResults.poseMultiLandmarks || [this.latestPoseResults.poseLandmarks];
 
-    // MediaPipe supports poseLandmarks or poseMultiLandmarks
-    const poses = this.latestPoseResults.poseMultiLandmarks || [this.latestPoseResults.poseLandmarks];
-
-    poses.forEach((landmarks, poseIdx) => {
-      if (poseIdx >= 4) return; // Up to 4 players
-      const color = playerColors[poseIdx];
-
-      // Draw Joint Connectors inside mirrored canvas context
-      this.ctx.save();
-      this.ctx.translate(w, 0);
-      this.ctx.scale(-1, 1);
-      if (window.drawConnectors && window.POSE_CONNECTIONS) {
-        drawConnectors(this.ctx, landmarks, POSE_CONNECTIONS, { color: color, lineWidth: 4 });
-      }
-      this.ctx.restore();
-
-      // Key Sensor Landmarks (Left/Right Wrist, Left/Right Ankle, Nose)
-      const sensorIndices = [15, 16, 27, 28, 0]; // Wrists, Ankles, Nose
+      // Key Sensor Landmarks (Nose: 0, Wrists: 15,16, Index: 19,20, Ankles: 27,28, Toes: 31,32)
+      const sensorIndices = [0, 15, 16, 19, 20, 27, 28, 31, 32];
       const Bodies = Matter.Bodies;
       const World = Matter.World;
 
-      landmarks.forEach((lm, idx) => {
-        // Compute mirrored screen coordinates: (1 - lm.x) * w
-        const lx = (1 - lm.x) * w;
-        const ly = lm.y * h;
+      poses.forEach((landmarks, poseIdx) => {
+        if (poseIdx >= 4) return; // Up to 4 players
+        const color = playerColors[poseIdx];
 
-        // Draw Joint Point
-        this.ctx.fillStyle = color;
-        this.ctx.beginPath();
-        this.ctx.arc(lx, ly, 8, 0, Math.PI * 2);
-        this.ctx.fill();
+        // Draw Joint Connectors inside mirrored canvas context
+        this.ctx.save();
+        this.ctx.translate(w, 0);
+        this.ctx.scale(-1, 1);
+        if (window.drawConnectors && window.POSE_CONNECTIONS) {
+          drawConnectors(this.ctx, landmarks, POSE_CONNECTIONS, { color: color, lineWidth: 4 });
+        }
+        this.ctx.restore();
 
-        // If Key limb joint, attach physical sensor body at mirrored position for slapping items!
-        if (sensorIndices.includes(idx)) {
-          const sensor = Bodies.circle(lx, ly, 25, {
-            isStatic: true,
-            isSensor: true,
-            label: `Player_${poseIdx}_Joint_${idx}`
-          });
-          sensor.isPlayerSensor = true;
-          this.playerSensors.push(sensor);
-          World.add(this.physicsWorld, sensor);
+        landmarks.forEach((lm, idx) => {
+          // Compute mirrored screen coordinates: (1 - lm.x) * w
+          const lx = (1 - lm.x) * w;
+          const ly = lm.y * h;
 
-          // Glowing aura on hands/feet
-          this.ctx.strokeStyle = color;
-          this.ctx.lineWidth = 2;
+          // Draw Joint Point
+          this.ctx.fillStyle = color;
           this.ctx.beginPath();
-          this.ctx.arc(lx, ly, 22, 0, Math.PI * 2);
-          this.ctx.stroke();
+          this.ctx.arc(lx, ly, 8, 0, Math.PI * 2);
+          this.ctx.fill();
+
+          // If Key limb joint, update/attach persistent physical sensor body
+          if (sensorIndices.includes(idx)) {
+            const key = `P_${poseIdx}_J_${idx}`;
+            activeSensorKeys.add(key);
+
+            let sensor = this.sensorPool[key];
+            if (!sensor) {
+              sensor = Bodies.circle(lx, ly, 40, {
+                isStatic: true,
+                isSensor: true,
+                label: key
+              });
+              sensor.isPlayerSensor = true;
+              this.sensorPool[key] = sensor;
+              World.add(this.physicsWorld, sensor);
+            } else {
+              // Smoothly update static sensor body position in Matter.js world
+              Matter.Body.setPosition(sensor, { x: lx, y: ly });
+            }
+
+            // Glowing aura on hands/feet
+            this.ctx.strokeStyle = color;
+            this.ctx.lineWidth = 3;
+            this.ctx.beginPath();
+            this.ctx.arc(lx, ly, 35, 0, Math.PI * 2);
+            this.ctx.stroke();
+          }
+        });
+      });
+    }
+
+    // Move any inactive sensors offscreen so they don't trigger false collisions
+    if (this.sensorPool) {
+      Object.keys(this.sensorPool).forEach((key) => {
+        if (!activeSensorKeys.has(key)) {
+          Matter.Body.setPosition(this.sensorPool[key], { x: -9999, y: -9999 });
         }
       });
-    });
+    }
   }
 
   drawPhysicsItems() {
