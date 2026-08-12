@@ -219,6 +219,7 @@ class App {
   }
 
   updatePhysicsBoundaries() {
+    if (this.currentTheme === 'space') return; // No solid walls in Space Mode
     const { width, height } = this.canvas;
     const thickness = 100;
     const Bodies = Matter.Bodies;
@@ -255,18 +256,25 @@ class App {
     if (theme === 'sea') {
       this.physicsWorld.gravity.y = 0.15;
       this.physicsWorld.gravity.x = 0;
+      this.updatePhysicsBoundaries();
       toastIcon.className = 'fa-solid fa-water';
       toastText.textContent = '海モード (低重力・ふわふわ浮遊)';
     } else if (theme === 'grass') {
       this.physicsWorld.gravity.y = 1.0;
       this.physicsWorld.gravity.x = 0;
+      this.updatePhysicsBoundaries();
       toastIcon.className = 'fa-solid fa-tree';
       toastText.textContent = '草原モード (標準重力・高反発バウンド)';
     } else if (theme === 'space') {
       this.physicsWorld.gravity.y = 0.0;
       this.physicsWorld.gravity.x = 0;
+      // Remove solid walls in space mode so items fly straight through outer borders
+      if (this.boundaries) {
+        Matter.World.remove(this.physicsWorld, this.boundaries);
+        this.boundaries = null;
+      }
       toastIcon.className = 'fa-solid fa-user-astronaut';
-      toastText.textContent = '宇宙モード (無重力・中央推進)';
+      toastText.textContent = '宇宙モード (全方向無減速スルー)';
     }
 
     toast.style.opacity = '1';
@@ -279,23 +287,59 @@ class App {
     const World = Matter.World;
     const Body = Matter.Body;
 
-    const x = Math.random() * (this.canvas.width - 200) + 100;
-    const y = -30; // Drop from above top edge
+    const width = this.canvas.width;
+    const height = this.canvas.height;
     const size = 64; // diameter or width
+    const isSpace = this.currentTheme === 'space';
+
+    let x, y, vx, vy;
+
+    if (isSpace) {
+      // Pick one of 4 outer edges at random: 0: Top, 1: Right, 2: Bottom, 3: Left
+      const side = Math.floor(Math.random() * 4);
+      const speed = Math.random() * 1.5 + 4.0; // Constant velocity 4.0 ~ 5.5
+
+      if (side === 0) { // Top -> Flying Down
+        x = Math.random() * (width - 160) + 80;
+        y = -50;
+        vx = (Math.random() - 0.5) * 2;
+        vy = speed;
+      } else if (side === 1) { // Right -> Flying Left
+        x = width + 50;
+        y = Math.random() * (height - 160) + 80;
+        vx = -speed;
+        vy = (Math.random() - 0.5) * 2;
+      } else if (side === 2) { // Bottom -> Flying Up
+        x = Math.random() * (width - 160) + 80;
+        y = height + 50;
+        vx = (Math.random() - 0.5) * 2;
+        vy = -speed;
+      } else { // Left -> Flying Right
+        x = -50;
+        y = Math.random() * (height - 160) + 80;
+        vx = speed;
+        vy = (Math.random() - 0.5) * 2;
+      }
+    } else {
+      // Normal top drop for Sea and Grassland
+      x = Math.random() * (width - 200) + 100;
+      y = -30;
+      vx = (Math.random() - 0.5) * 1;
+      vy = 0;
+    }
+
+    const options = {
+      restitution: this.currentTheme === 'grass' ? 0.95 : 0.7,
+      frictionAir: isSpace ? 0.0 : (this.currentTheme === 'sea' ? 0.04 : 0.01),
+      friction: isSpace ? 0.0 : 0.1,
+      density: 0.002
+    };
 
     let body;
     if (shape === 'square') {
-      body = Bodies.rectangle(x, y, size, size, {
-        restitution: this.currentTheme === 'grass' ? 0.9 : 0.6,
-        frictionAir: this.currentTheme === 'sea' ? 0.04 : 0.01,
-        density: 0.002
-      });
+      body = Bodies.rectangle(x, y, size, size, options);
     } else {
-      body = Bodies.circle(x, y, size / 2, {
-        restitution: this.currentTheme === 'grass' ? 0.95 : 0.7,
-        frictionAir: this.currentTheme === 'sea' ? 0.03 : 0.01,
-        density: 0.002
-      });
+      body = Bodies.circle(x, y, size / 2, options);
     }
 
     // Load Image for rendering texture
@@ -311,16 +355,9 @@ class App {
       hit: false
     };
 
-    // If Space theme, apply velocity vector towards center
-    if (this.currentTheme === 'space') {
-      const centerX = this.canvas.width / 2;
-      const centerY = this.canvas.height / 2;
-      const angle = Math.atan2(centerY - y, centerX - x);
-      const speed = 4;
-      Body.setVelocity(body, {
-        x: Math.cos(angle) * speed,
-        y: Math.sin(angle) * speed
-      });
+    // Apply linear velocity vector for Space Mode
+    if (isSpace) {
+      Body.setVelocity(body, { x: vx, y: vy });
     }
 
     this.physicsItems.push(body);
