@@ -478,29 +478,50 @@ class App {
     setTimeout(() => popup.remove(), 1000);
   }
 
-  // Setup Unified MediaPipe Pose Engine (with built-in Segmentation)
+  // Setup MediaPipe Selfie Segmentation & Pose
   setupMediaPipe() {
+    this.isProcessingSegment = false;
     this.isProcessingPose = false;
 
-    // Unified Pose Setup (numPoses: 4, enableSegmentation: true)
+    // 1. Selfie Segmentation Setup
+    if (window.SelfieSegmentation) {
+      try {
+        this.segmentation = new window.SelfieSegmentation({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+        });
+        this.segmentation.setOptions({
+          modelSelection: 1 // 1: Landscape model for wide/full-body view
+        });
+        this.segmentation.onResults((results) => {
+          this.latestSegmentationResults = results;
+          this.isProcessingSegment = false;
+        });
+      } catch (err) {
+        console.warn("SelfieSegmentation init warning:", err);
+      }
+    }
+
+    // 2. Pose Setup (numPoses: 4)
     if (window.Pose) {
-      this.pose = new Pose({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-      });
-      this.pose.setOptions({
-        modelComplexity: 1, // 1: Balanced accuracy & 60FPS speed for PC
-        smoothLandmarks: true,
-        enableSegmentation: true, // Integrated Selfie Segmentation in single pass!
-        smoothSegmentation: true,
-        minDetectionConfidence: 0.4,
-        minTrackingConfidence: 0.4,
-        numPoses: 4
-      });
-      this.pose.onResults((results) => {
-        this.latestPoseResults = results;
-        this.latestSegmentationResults = results; // Contains results.segmentationMask!
-        this.isProcessingPose = false;
-      });
+      try {
+        this.pose = new window.Pose({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        this.pose.setOptions({
+          modelComplexity: 1,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.4,
+          minTrackingConfidence: 0.4,
+          numPoses: 4
+        });
+        this.pose.onResults((results) => {
+          this.latestPoseResults = results;
+          this.isProcessingPose = false;
+        });
+      } catch (err) {
+        console.warn("Pose init warning:", err);
+      }
     }
 
     // Start Webcam
@@ -528,8 +549,12 @@ class App {
       const delta = now - lastTime;
       lastTime = now;
 
-      // Send video frames to unified MediaPipe Pose engine without WebGL conflicts
+      // Send video frames to MediaPipe engines safely
       if (this.video && this.video.readyState >= 2) {
+        if (this.segmentation && !this.isProcessingSegment) {
+          this.isProcessingSegment = true;
+          this.segmentation.send({ image: this.video }).catch(() => { this.isProcessingSegment = false; });
+        }
         if (this.pose && !this.isProcessingPose) {
           this.isProcessingPose = true;
           this.pose.send({ image: this.video }).catch(() => { this.isProcessingPose = false; });
@@ -556,8 +581,12 @@ class App {
         this.physicsItems = this.physicsItems.filter(b => !b.isDead);
       }
 
-      // Draw Main Canvas
-      this.drawCanvas();
+      // Draw Main Canvas with try-catch safeguard so loop never dies
+      try {
+        this.drawCanvas();
+      } catch (err) {
+        console.warn("Draw canvas warning:", err);
+      }
 
       requestAnimationFrame(loop);
     };
@@ -574,39 +603,53 @@ class App {
     // 1. Draw Theme Background first
     this.drawThemeBackground(width, height);
 
-    // 2. Draw Mirrored Person with Selfie Segmentation cut-out
-    if (this.latestSegmentationResults && this.video && this.video.readyState >= 2) {
-      if (!this.offscreenCanvas) {
-        this.offscreenCanvas = document.createElement('canvas');
-        this.offscreenCtx = this.offscreenCanvas.getContext('2d');
+    // 2. Draw Mirrored Person with Selfie Segmentation cut-out (or fallback to mirrored video)
+    let drewCutout = false;
+
+    if (
+      this.latestSegmentationResults &&
+      this.latestSegmentationResults.segmentationMask &&
+      this.video &&
+      this.video.readyState >= 2
+    ) {
+      try {
+        if (!this.offscreenCanvas) {
+          this.offscreenCanvas = document.createElement('canvas');
+          this.offscreenCtx = this.offscreenCanvas.getContext('2d');
+        }
+        if (this.offscreenCanvas.width !== width || this.offscreenCanvas.height !== height) {
+          this.offscreenCanvas.width = width;
+          this.offscreenCanvas.height = height;
+        }
+
+        const oCtx = this.offscreenCtx;
+        oCtx.clearRect(0, 0, width, height);
+
+        const frameImg = this.latestSegmentationResults.image || this.video;
+
+        // Draw mask & video mirrored onto offscreen canvas
+        oCtx.save();
+        oCtx.translate(width, 0);
+        oCtx.scale(-1, 1);
+        
+        // Draw segmentation mask (white silhouette on transparent canvas)
+        oCtx.drawImage(this.latestSegmentationResults.segmentationMask, 0, 0, width, height);
+        
+        // Crop video into silhouette
+        oCtx.globalCompositeOperation = 'source-in';
+        oCtx.drawImage(frameImg, 0, 0, width, height);
+        oCtx.restore();
+
+        // Draw the mirrored person cut-out onto main canvas over theme background!
+        this.ctx.drawImage(this.offscreenCanvas, 0, 0, width, height);
+        drewCutout = true;
+      } catch (err) {
+        console.warn("Segmentation cutout draw failed, using fallback:", err);
       }
-      if (this.offscreenCanvas.width !== width || this.offscreenCanvas.height !== height) {
-        this.offscreenCanvas.width = width;
-        this.offscreenCanvas.height = height;
-      }
+    }
 
-      const oCtx = this.offscreenCtx;
-      oCtx.clearRect(0, 0, width, height);
-
-      const frameImg = this.latestSegmentationResults.image || this.video;
-
-      // Draw mask & video mirrored onto offscreen canvas
-      oCtx.save();
-      oCtx.translate(width, 0);
-      oCtx.scale(-1, 1);
-      
-      // Draw segmentation mask (white silhouette on transparent canvas)
-      oCtx.drawImage(this.latestSegmentationResults.segmentationMask, 0, 0, width, height);
-      
-      // Crop video into silhouette
-      oCtx.globalCompositeOperation = 'source-in';
-      oCtx.drawImage(frameImg, 0, 0, width, height);
-      oCtx.restore();
-
-      // Draw the mirrored person cut-out onto main canvas over theme background!
-      this.ctx.drawImage(this.offscreenCanvas, 0, 0, width, height);
-    } else if (this.video && this.video.readyState >= 2) {
-      // Fallback: draw mirrored full video stream if segmentation not ready yet
+    if (!drewCutout && this.video && this.video.readyState >= 2) {
+      // Safe Fallback: draw mirrored full video stream over theme background
       this.ctx.save();
       this.ctx.translate(width, 0);
       this.ctx.scale(-1, 1);
