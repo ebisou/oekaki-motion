@@ -119,7 +119,10 @@ class App {
     this.spawnerTimeout = null;
     this.isPlaying = false;
     this.currentTheme = 'sea'; // 'sea' | 'grass' | 'space'
-    this.customPhoneItems = []; // Queue for items sent from smartphones via PeerJS
+    this.currentScoreTexture = null; // Latest score item photo sent from phone
+    this.currentObstacleTexture = null; // Latest obstacle item photo sent from phone
+    this.currentScoreShape = 'circle';
+    this.currentObstacleShape = 'circle';
     
     // PeerJS
     this.peer = null;
@@ -369,23 +372,28 @@ class App {
     if (!this.isPlaying) return;
     if (this.physicsItems.length >= 12) return; // Allow active rain of up to 12 items
 
-    // 1. Priority: Phone photos sent via PeerJS (User drawn items!)
-    if (this.customPhoneItems && this.customPhoneItems.length > 0) {
-      const itemData = this.customPhoneItems.shift();
-      const isScore = itemData.mode === 'score';
-      this.spawnItem(itemData.imageData, isScore, itemData.shape || 'circle');
-      return;
+    const isScore = Math.random() < 0.75; // 75% score items, 25% obstacle items
+    let textureUrl = null;
+    let shape = 'circle';
+
+    if (isScore) {
+      if (this.currentScoreTexture) {
+        textureUrl = this.currentScoreTexture;
+        shape = this.currentScoreShape || 'circle';
+      } else {
+        textureUrl = this.createPresetTexture('⭐', true);
+        shape = Math.random() < 0.5 ? 'circle' : 'square';
+      }
+    } else {
+      if (this.currentObstacleTexture) {
+        textureUrl = this.currentObstacleTexture;
+        shape = this.currentObstacleShape || 'circle';
+      } else {
+        textureUrl = this.createPresetTexture('💣', false);
+        shape = Math.random() < 0.5 ? 'circle' : 'square';
+      }
     }
 
-    // 2. Default Preset Items
-    const isScore = Math.random() < 0.75; // 75% score items, 25% obstacle items
-    const scoreEmojis = ['⭐', '💎', '🍎', '🍬', '🚀', '👑'];
-    const obstacleEmojis = ['💣', '👾', '👻', '⚡', '💀'];
-    const emojiList = isScore ? scoreEmojis : obstacleEmojis;
-    const text = emojiList[Math.floor(Math.random() * emojiList.length)];
-    const shape = Math.random() < 0.5 ? 'circle' : 'square';
-
-    const textureUrl = this.createPresetTexture(text, isScore);
     this.spawnItem(textureUrl, isScore, shape);
   }
 
@@ -928,10 +936,16 @@ class App {
 
       conn.on('data', (data) => {
         if (data && data.type === 'SPAWN_ITEM') {
-          if (!this.customPhoneItems) this.customPhoneItems = [];
-          this.customPhoneItems.push(data);
+          const isScore = data.mode === 'score';
+          if (isScore) {
+            this.currentScoreTexture = data.imageData;
+            this.currentScoreShape = data.shape || 'circle';
+          } else {
+            this.currentObstacleTexture = data.imageData;
+            this.currentObstacleShape = data.shape || 'circle';
+          }
 
-          // If game is actively playing, drop custom item immediately!
+          // If game is actively playing, trigger an immediate drop with the new texture!
           if (this.isPlaying) {
             this.spawnRandomItem();
           }
