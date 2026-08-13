@@ -483,13 +483,13 @@ class App {
     this.isProcessingSegment = false;
     this.isProcessingPose = false;
 
-    // 1. Selfie Segmentation Setup (modelSelection: 0 for fast general model)
+    // 1. Selfie Segmentation Setup (modelSelection: 1 for landscape & full-body standing view)
     if (window.SelfieSegmentation) {
       this.segmentation = new SelfieSegmentation({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
       });
       this.segmentation.setOptions({
-        modelSelection: 0
+        modelSelection: 1 // 1: Landscape model for full-body / wide angle camera view
       });
       this.segmentation.onResults((results) => {
         this.latestSegmentationResults = results;
@@ -497,17 +497,17 @@ class App {
       });
     }
 
-    // 2. Pose Setup (numPoses: 4)
+    // 2. Pose Setup (numPoses: 4, modelComplexity: 2 for full-body precision)
     if (window.Pose) {
       this.pose = new Pose({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
       });
       this.pose.setOptions({
-        modelComplexity: 1,
+        modelComplexity: 2, // 2: High complexity model for full-body distance accuracy
         smoothLandmarks: true,
         enableSegmentation: false,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
+        minDetectionConfidence: 0.3,
+        minTrackingConfidence: 0.3,
         numPoses: 4
       });
       this.pose.onResults((results) => {
@@ -701,7 +701,7 @@ class App {
 
         targetLandmarks.forEach((target) => {
           const lm = landmarks[target.id];
-          if (!lm || (lm.visibility !== undefined && lm.visibility < 0.3)) return;
+          if (!lm || (lm.visibility !== undefined && lm.visibility < 0.05)) return;
 
           // Compute mirrored screen coordinates: (1 - lm.x) * w
           const lx = (1 - lm.x) * w;
