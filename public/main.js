@@ -524,10 +524,12 @@ class App {
       }
     }
 
-    // Start Webcam
+    // Start Webcam (default facingMode: user for front camera on smartphones / laptops)
+    this.currentCameraFacing = 'user';
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false })
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: this.currentCameraFacing, width: 1280, height: 720 }, audio: false })
         .then((stream) => {
+          this.webcamStream = stream;
           this.video.srcObject = stream;
           this.video.play();
           this.startRenderLoop();
@@ -538,6 +540,28 @@ class App {
         });
     } else {
       this.startRenderLoop();
+    }
+  }
+
+  toggleWebcam() {
+    this.currentCameraFacing = (this.currentCameraFacing === 'user') ? 'environment' : 'user';
+    if (this.webcamStream) {
+      this.webcamStream.getTracks().forEach(track => track.stop());
+    }
+
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: this.currentCameraFacing, width: 1280, height: 720 },
+        audio: false
+      })
+      .then((stream) => {
+        this.webcamStream = stream;
+        this.video.srcObject = stream;
+        this.video.play();
+      })
+      .catch((err) => {
+        console.warn("Camera toggle warning:", err);
+      });
     }
   }
 
@@ -844,6 +868,11 @@ class App {
       this.resetGame();
       this.startGame();
     });
+
+    const btnToggleCam = document.getElementById('btn-toggle-cam');
+    if (btnToggleCam) {
+      btnToggleCam.addEventListener('click', () => this.toggleWebcam());
+    }
 
     // Theme Selector Buttons
     document.querySelectorAll('.theme-btn').forEach(btn => {

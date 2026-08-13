@@ -853,6 +853,151 @@ body {
   }
 }
 
+/* QR Accordion Drawer */
+.qr-accordion {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.qr-accordion-summary {
+  padding: 12px 16px;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+  background: var(--bg-panel);
+}
+
+.qr-accordion-summary::-webkit-details-marker {
+  display: none;
+}
+
+.qr-accordion[open] .accordion-arrow {
+  transform: rotate(180deg);
+}
+
+.qr-cards-wrapper {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* RESPONSIVE MEDIA QUERIES FOR SMARTPHONE & TABLET BROWSERS */
+@media (max-width: 900px) {
+  #pc-view {
+    overflow-y: auto;
+  }
+
+  .game-header {
+    flex-direction: column;
+    height: auto;
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .header-left .brand-tag {
+    display: none;
+  }
+
+  .header-center {
+    width: 100%;
+    justify-content: center;
+    gap: 12px;
+  }
+
+  .header-right {
+    width: 100%;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .control-group {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .control-group .btn {
+    flex: 1;
+    padding: 8px 4px;
+    font-size: 12px;
+  }
+
+  .theme-selector {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .theme-btn {
+    flex: 1;
+    padding: 6px 4px;
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .game-main {
+    flex-direction: column;
+    padding: 8px;
+    overflow-y: auto;
+  }
+
+  .canvas-wrapper {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16/9;
+    max-height: 55vh;
+  }
+
+  .side-panel {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .qr-accordion[open] .qr-cards-wrapper {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .qr-card p.qr-desc {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .qr-accordion[open] .qr-cards-wrapper {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Landscape Mode on Smartphones */
+@media (max-width: 900px) and (orientation: landscape) {
+  .game-header {
+    position: relative;
+    padding: 6px 12px;
+  }
+
+  .game-main {
+    padding: 4px;
+  }
+
+  .canvas-wrapper {
+    height: 70vh;
+    max-height: 70vh;
+  }
+}
+
 /* Responsive adjustments */
 @media (max-width: 900px) {
   .game-main {

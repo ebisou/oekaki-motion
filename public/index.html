@@ -67,8 +67,9 @@
           <!-- Main Controls -->
           <div class="control-group">
             <button id="btn-start" class="btn btn-primary"><i class="fa-solid fa-play"></i> スタート</button>
-            <button id="btn-stop" class="btn btn-warning" disabled><i class="fa-solid fa-pause"></i> パーズ</button>
+            <button id="btn-stop" class="btn btn-warning" disabled><i class="fa-solid fa-pause"></i> ポーズ</button>
             <button id="btn-reset" class="btn btn-danger"><i class="fa-solid fa-rotate-left"></i> リセット</button>
+            <button id="btn-toggle-cam" class="btn btn-secondary" title="カメラ切替"><i class="fa-solid fa-camera-rotate"></i></button>
           </div>
 
           <!-- Theme Switcher -->
@@ -103,29 +104,38 @@
           </div>
         </div>
 
-        <!-- Right Side Panel for QR Codes & P2P status -->
+        <!-- Collapsible Side Panel for QR Codes & P2P status on mobile/desktop -->
         <aside class="side-panel">
-          <div class="qr-card score-qr-card">
-            <div class="qr-card-header">
-              <span class="qr-badge score-badge-pill">+100 点</span>
-              <h3><i class="fa-solid fa-mobile-screen-button"></i> 加点アイテム</h3>
-            </div>
-            <div class="qr-container">
-              <div id="qr-score" class="qr-code"></div>
-            </div>
-            <p class="qr-desc">スマホで撮影して加点アイテムを画面に投げ込もう！</p>
-          </div>
+          <details class="qr-accordion" open>
+            <summary class="qr-accordion-summary">
+              <span><i class="fa-solid fa-qrcode"></i> スマホ連携QRコード</span>
+              <span class="accordion-arrow"><i class="fa-solid fa-chevron-down"></i></span>
+            </summary>
 
-          <div class="qr-card obstacle-qr-card">
-            <div class="qr-card-header">
-              <span class="qr-badge obstacle-badge-pill">-50 点</span>
-              <h3><i class="fa-solid fa-bomb"></i> お邪魔アイテム</h3>
+            <div class="qr-cards-wrapper">
+              <div class="qr-card score-qr-card">
+                <div class="qr-card-header">
+                  <span class="qr-badge score-badge-pill">+100 点</span>
+                  <h3><i class="fa-solid fa-mobile-screen-button"></i> 加点アイテム</h3>
+                </div>
+                <div class="qr-container">
+                  <div id="qr-score" class="qr-code"></div>
+                </div>
+                <p class="qr-desc">スマホで撮影して加点アイテムを画面に投げ込もう！</p>
+              </div>
+
+              <div class="qr-card obstacle-qr-card">
+                <div class="qr-card-header">
+                  <span class="qr-badge obstacle-badge-pill">-50 点</span>
+                  <h3><i class="fa-solid fa-bomb"></i> お邪魔アイテム</h3>
+                </div>
+                <div class="qr-container">
+                  <div id="qr-obstacle" class="qr-code"></div>
+                </div>
+                <p class="qr-desc">お邪魔罠アイテムを作って画面に投入！</p>
+              </div>
             </div>
-            <div class="qr-container">
-              <div id="qr-obstacle" class="qr-code"></div>
-            </div>
-            <p class="qr-desc">お邪魔罠アイテムを作って画面に投入！</p>
-          </div>
+          </details>
 
           <!-- PeerJS Status -->
           <div class="peer-status-card">
