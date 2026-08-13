@@ -478,40 +478,27 @@ class App {
     setTimeout(() => popup.remove(), 1000);
   }
 
-  // Setup MediaPipe Selfie Segmentation & Pose
+  // Setup Unified MediaPipe Pose Engine (with built-in Segmentation)
   setupMediaPipe() {
-    this.isProcessingSegment = false;
     this.isProcessingPose = false;
 
-    // 1. Selfie Segmentation Setup (modelSelection: 1 for landscape & full-body standing view)
-    if (window.SelfieSegmentation) {
-      this.segmentation = new SelfieSegmentation({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
-      });
-      this.segmentation.setOptions({
-        modelSelection: 1 // 1: Landscape model for full-body / wide angle camera view
-      });
-      this.segmentation.onResults((results) => {
-        this.latestSegmentationResults = results;
-        this.isProcessingSegment = false;
-      });
-    }
-
-    // 2. Pose Setup (numPoses: 4, modelComplexity: 2 for full-body precision)
+    // Unified Pose Setup (numPoses: 4, enableSegmentation: true)
     if (window.Pose) {
       this.pose = new Pose({
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
       });
       this.pose.setOptions({
-        modelComplexity: 2, // 2: High complexity model for full-body distance accuracy
+        modelComplexity: 1, // 1: Balanced accuracy & 60FPS speed for PC
         smoothLandmarks: true,
-        enableSegmentation: false,
-        minDetectionConfidence: 0.3,
-        minTrackingConfidence: 0.3,
+        enableSegmentation: true, // Integrated Selfie Segmentation in single pass!
+        smoothSegmentation: true,
+        minDetectionConfidence: 0.4,
+        minTrackingConfidence: 0.4,
         numPoses: 4
       });
       this.pose.onResults((results) => {
         this.latestPoseResults = results;
+        this.latestSegmentationResults = results; // Contains results.segmentationMask!
         this.isProcessingPose = false;
       });
     }
@@ -541,12 +528,8 @@ class App {
       const delta = now - lastTime;
       lastTime = now;
 
-      // Send video frames to MediaPipe asynchronously without blocking/stacking WASM
+      // Send video frames to unified MediaPipe Pose engine without WebGL conflicts
       if (this.video && this.video.readyState >= 2) {
-        if (this.segmentation && !this.isProcessingSegment) {
-          this.isProcessingSegment = true;
-          this.segmentation.send({ image: this.video }).catch(() => { this.isProcessingSegment = false; });
-        }
         if (this.pose && !this.isProcessingPose) {
           this.isProcessingPose = true;
           this.pose.send({ image: this.video }).catch(() => { this.isProcessingPose = false; });
