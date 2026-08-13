@@ -257,17 +257,17 @@ class App {
     });
 
     if (theme === 'sea') {
-      this.physicsWorld.gravity.y = 0.15;
+      this.physicsWorld.gravity.y = 0.05; // Gentle underwater gravity
       this.physicsWorld.gravity.x = 0;
       this.updatePhysicsBoundaries();
       toastIcon.className = 'fa-solid fa-water';
-      toastText.textContent = '海モード (低重力・ふわふわ浮遊)';
+      toastText.textContent = '海モード (低重力・水すい浮遊)';
     } else if (theme === 'grass') {
-      this.physicsWorld.gravity.y = 1.0;
+      this.physicsWorld.gravity.y = 0.25; // Gentle falling speed
       this.physicsWorld.gravity.x = 0;
       this.updatePhysicsBoundaries();
       toastIcon.className = 'fa-solid fa-tree';
-      toastText.textContent = '草原モード (標準重力・高反発バウンド)';
+      toastText.textContent = '草原モード (標準重力・ゆったり落下)';
     } else if (theme === 'space') {
       this.physicsWorld.gravity.y = 0.0;
       this.physicsWorld.gravity.x = 0;
@@ -300,42 +300,42 @@ class App {
     if (isSpace) {
       // Pick one of 4 outer edges at random: 0: Top, 1: Right, 2: Bottom, 3: Left
       const side = Math.floor(Math.random() * 4);
-      const speed = Math.random() * 1.5 + 4.0; // Constant velocity 4.0 ~ 5.5
+      const speed = Math.random() * 1.0 + 2.5; // Constant velocity 2.5 ~ 3.5
 
       if (side === 0) { // Top -> Flying Down
         x = Math.random() * (width - 160) + 80;
         y = -50;
-        vx = (Math.random() - 0.5) * 2;
+        vx = (Math.random() - 0.5) * 1.5;
         vy = speed;
       } else if (side === 1) { // Right -> Flying Left
         x = width + 50;
         y = Math.random() * (height - 160) + 80;
         vx = -speed;
-        vy = (Math.random() - 0.5) * 2;
+        vy = (Math.random() - 0.5) * 1.5;
       } else if (side === 2) { // Bottom -> Flying Up
         x = Math.random() * (width - 160) + 80;
         y = height + 50;
-        vx = (Math.random() - 0.5) * 2;
+        vx = (Math.random() - 0.5) * 1.5;
         vy = -speed;
       } else { // Left -> Flying Right
         x = -50;
         y = Math.random() * (height - 160) + 80;
         vx = speed;
-        vy = (Math.random() - 0.5) * 2;
+        vy = (Math.random() - 0.5) * 1.5;
       }
     } else {
       // Normal top drop for Sea and Grassland
       x = Math.random() * (width - 200) + 100;
       y = -30;
-      vx = (Math.random() - 0.5) * 1;
+      vx = (Math.random() - 0.5) * 0.5;
       vy = 0;
     }
 
     const options = {
-      restitution: this.currentTheme === 'grass' ? 0.95 : 0.7,
-      frictionAir: isSpace ? 0.0 : (this.currentTheme === 'sea' ? 0.04 : 0.01),
+      restitution: this.currentTheme === 'grass' ? 0.8 : 0.6,
+      frictionAir: isSpace ? 0.0 : (this.currentTheme === 'sea' ? 0.08 : 0.025),
       friction: isSpace ? 0.0 : 0.1,
-      density: 0.002
+      density: 0.001
     };
 
     let body;
