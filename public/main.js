@@ -367,9 +367,9 @@ class App {
   // Periodic Random Item Spawner
   spawnRandomItem() {
     if (!this.isPlaying) return;
-    if (this.physicsItems.length >= 8) return; // Prevent excessive item clutter
+    if (this.physicsItems.length >= 12) return; // Allow active rain of up to 12 items
 
-    // 1. Priority: Phone photos sent via PeerJS
+    // 1. Priority: Phone photos sent via PeerJS (User drawn items!)
     if (this.customPhoneItems && this.customPhoneItems.length > 0) {
       const itemData = this.customPhoneItems.shift();
       const isScore = itemData.mode === 'score';
@@ -419,8 +419,8 @@ class App {
 
     const scheduleNext = () => {
       if (!this.isPlaying) return;
-      // Random delay between 1.5s and 2.8s
-      const delay = Math.random() * 1300 + 1500;
+      // Fast drop interval: 600ms to 1300ms for continuous thrill
+      const delay = Math.random() * 700 + 600;
       this.spawnerTimeout = setTimeout(() => {
         if (this.isPlaying) {
           this.spawnRandomItem();
