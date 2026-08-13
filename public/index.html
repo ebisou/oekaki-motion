@@ -164,7 +164,7 @@
           <i class="fa-solid fa-wand-magic-sparkles"></i> 加点アイテム作成 (+100)
         </div>
         <div class="mobile-room-info">
-          <i class="fa-solid fa-wifi"></i> <span id="mobile-peer-status">PC接続完了</span>
+          <i class="fa-solid fa-wifi"></i> <span id="mobile-peer-status">PC接続準備中</span>
         </div>
       </header>
 
@@ -173,6 +173,12 @@
         <div class="camera-wrapper">
           <video id="mobile-video" autoplay playsinline muted></video>
           <canvas id="crop-canvas" style="display: none;"></canvas>
+
+          <!-- Fallback message if live camera stream is unavailable -->
+          <div id="camera-fallback-msg" class="camera-fallback" style="display: none;">
+            <i class="fa-solid fa-camera"></i>
+            <p>カメラ映像が開始されない場合は、下の「アルバム/撮影」ボタンから写真をアップロードできます</p>
+          </div>
 
           <!-- Shape Overlay Mask on Viewfinder -->
           <div id="shape-overlay-mask" class="shape-mask circle-mask"></div>
@@ -189,9 +195,16 @@
           </button>
         </div>
 
-        <!-- Photo Capture / Preview Controls -->
+        <!-- Photo Capture & File Upload Controls -->
         <div class="mobile-actions">
-          <button id="btn-capture" class="btn btn-accent btn-xl"><i class="fa-solid fa-camera"></i> 写真を撮る</button>
+          <div id="capture-btn-group" class="capture-btn-group">
+            <button id="btn-capture" class="btn btn-accent btn-xl"><i class="fa-solid fa-camera"></i> 写真を撮る</button>
+            <label for="mobile-file-input" class="btn btn-secondary btn-lg btn-upload">
+              <i class="fa-solid fa-image"></i> 写真フォルダから選択
+            </label>
+            <input type="file" id="mobile-file-input" accept="image/*" style="display: none;">
+          </div>
+
           <div id="preview-actions" class="preview-actions" style="display: none;">
             <button id="btn-retake" class="btn btn-secondary"><i class="fa-solid fa-rotate-left"></i> 再撮影</button>
             <button id="btn-send-item" class="btn btn-success btn-lg"><i class="fa-solid fa-paper-plane"></i> PCへ送信！</button>
@@ -200,7 +213,7 @@
 
         <!-- Captured Preview Image Container -->
         <div id="preview-container" class="preview-card" style="display: none;">
-          <h4>送信プレビュー</h4>
+          <h4>送信アイテム プレビュー</h4>
           <div class="preview-img-wrapper">
             <img id="preview-img" alt="Captured preview" />
           </div>

@@ -583,16 +583,23 @@ body {
 
 /* ================= MOBILE VIEW STYLES ================= */
 #mobile-view {
-  background: #000;
+  background: var(--bg-dark);
+  min-height: 100vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .mobile-header {
-  padding: 16px;
+  padding: 14px 16px;
   background: var(--bg-panel);
+  backdrop-filter: blur(12px);
   display: flex;
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--border-light);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .mode-badge {
@@ -624,16 +631,16 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px;
+  padding: 16px 16px 40px 16px;
   gap: 16px;
+  overflow-y: auto;
 }
 
 .camera-wrapper {
   position: relative;
   width: 100%;
-  max-width: 380px;
-  height: 380px;
+  max-width: 320px;
+  height: 320px;
   border-radius: 24px;
   overflow: hidden;
   background: #111;
@@ -648,12 +655,38 @@ body {
   transform: scaleX(-1);
 }
 
+.camera-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  background: #111827;
+  color: var(--text-muted);
+  z-index: 5;
+}
+
+.camera-fallback i {
+  font-size: 40px;
+  color: var(--accent-cyan);
+  margin-bottom: 12px;
+}
+
+.camera-fallback p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .shape-mask {
   position: absolute;
   inset: 0;
   pointer-events: none;
   border: 4px dashed var(--accent-cyan);
   transition: all 0.3s ease;
+  z-index: 10;
 }
 
 .shape-mask.circle-mask {
@@ -701,9 +734,29 @@ body {
 
 .mobile-actions {
   width: 100%;
-  max-width: 380px;
+  max-width: 340px;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.capture-btn-group {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.capture-btn-group .btn {
+  width: 100%;
   justify-content: center;
+}
+
+.btn-upload {
+  cursor: pointer;
+  margin: 0;
+  text-align: center;
 }
 
 .preview-actions {
@@ -714,31 +767,33 @@ body {
 
 .preview-actions .btn {
   flex: 1;
+  justify-content: center;
 }
 
 .preview-card {
   width: 100%;
-  max-width: 380px;
+  max-width: 340px;
   background: var(--bg-card);
   border: 1px solid var(--border-light);
   border-radius: 16px;
-  padding: 12px;
+  padding: 16px;
   text-align: center;
 }
 
 .preview-card h4 {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-muted);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .preview-img-wrapper {
-  width: 100px;
-  height: 100px;
+  width: 120px;
+  height: 120px;
   margin: 0 auto;
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
-  border: 2px solid var(--accent-cyan);
+  border: 3px solid var(--accent-cyan);
+  box-shadow: 0 4px 20px rgba(0, 243, 255, 0.3);
 }
 
 .preview-img-wrapper img {

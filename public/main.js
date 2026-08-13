@@ -976,16 +976,27 @@ class App {
 
   setupMobileCamera() {
     const video = document.getElementById('mobile-video');
+    const fallbackMsg = document.getElementById('camera-fallback-msg');
+
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: 640, height: 640 }, audio: false })
         .then((stream) => {
           video.srcObject = stream;
+          if (fallbackMsg) fallbackMsg.style.display = 'none';
         })
         .catch(() => {
           // Fallback to user facing camera
           navigator.mediaDevices.getUserMedia({ video: true, audio: false })
-            .then((stream) => { video.srcObject = stream; });
+            .then((stream) => {
+              video.srcObject = stream;
+              if (fallbackMsg) fallbackMsg.style.display = 'none';
+            })
+            .catch(() => {
+              if (fallbackMsg) fallbackMsg.style.display = 'flex';
+            });
         });
+    } else {
+      if (fallbackMsg) fallbackMsg.style.display = 'flex';
     }
   }
 
@@ -1008,26 +1019,52 @@ class App {
       mask.className = 'shape-mask square-mask';
     });
 
-    // Capture Photo
+    // Live Camera Capture Photo Button
     document.getElementById('btn-capture').addEventListener('click', () => {
-      this.capturePhoto();
+      const video = document.getElementById('mobile-video');
+      if (video && video.readyState >= 2) {
+        this.cropLoadedImage(video);
+      } else {
+        // If live camera is not ready, trigger file picker input
+        const fileInput = document.getElementById('mobile-file-input');
+        if (fileInput) fileInput.click();
+      }
     });
 
-    // Retake
+    // File Upload Picker Event
+    const fileInput = document.getElementById('mobile-file-input');
+    if (fileInput) {
+      fileInput.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (evt) => {
+            const img = new Image();
+            img.onload = () => {
+              this.cropLoadedImage(img);
+            };
+            img.src = evt.target.result;
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+    }
+
+    // Retake / Choose Again
     document.getElementById('btn-retake').addEventListener('click', () => {
-      document.getElementById('btn-capture').style.display = 'inline-flex';
+      const btnGroup = document.getElementById('capture-btn-group');
+      if (btnGroup) btnGroup.style.display = 'flex';
       document.getElementById('preview-actions').style.display = 'none';
       document.getElementById('preview-container').style.display = 'none';
     });
 
-    // Send to PC
+    // Send to PC Button
     document.getElementById('btn-send-item').addEventListener('click', () => {
       this.sendItemToPC();
     });
   }
 
-  capturePhoto() {
-    const video = document.getElementById('mobile-video');
+  cropLoadedImage(source) {
     const canvas = document.getElementById('crop-canvas');
     const ctx = canvas.getContext('2d');
 
@@ -1035,12 +1072,17 @@ class App {
     canvas.width = size;
     canvas.height = size;
 
-    // Draw video centered & cropped
-    const minDim = Math.min(video.videoWidth || 640, video.videoHeight || 640);
-    const sx = ((video.videoWidth || 640) - minDim) / 2;
-    const sy = ((video.videoHeight || 640) - minDim) / 2;
+    ctx.clearRect(0, 0, size, size);
 
-    ctx.drawImage(video, sx, sy, minDim, minDim, 0, 0, size, size);
+    // Get source width & height (video or image)
+    const sw = source.videoWidth || source.width || 640;
+    const sh = source.videoHeight || source.height || 640;
+
+    const minDim = Math.min(sw, sh);
+    const sx = (sw - minDim) / 2;
+    const sy = (sh - minDim) / 2;
+
+    ctx.drawImage(source, sx, sy, minDim, minDim, 0, 0, size, size);
 
     // Apply shape mask cropping on Canvas
     ctx.globalCompositeOperation = 'destination-in';
@@ -1055,9 +1097,11 @@ class App {
 
     this.capturedImageData = canvas.toDataURL('image/png');
 
-    // Display Preview
+    // Display Preview UI
     document.getElementById('preview-img').src = this.capturedImageData;
-    document.getElementById('btn-capture').style.display = 'none';
+    const btnGroup = document.getElementById('capture-btn-group');
+    if (btnGroup) btnGroup.style.display = 'none';
+
     document.getElementById('preview-actions').style.display = 'flex';
     document.getElementById('preview-container').style.display = 'block';
   }
@@ -1085,8 +1129,13 @@ class App {
   }
 
   sendItemToPC() {
-    if (!this.conn || !this.capturedImageData) {
-      alert('PCとのP2P接続を確立中です。数秒待って再試行してください。');
+    if (!this.capturedImageData) {
+      alert('送信する画像を選択してください。');
+      return;
+    }
+
+    if (!this.conn || !this.conn.open) {
+      alert('PCとのP2P通信を接続中です...画面のQRコードをもう一度読み取るか、数秒待って再試行してください。');
       return;
     }
 
@@ -1099,7 +1148,8 @@ class App {
 
     // Reset UI back to capture state after send
     alert('アイテムをPC画面へ送信しました！');
-    document.getElementById('btn-capture').style.display = 'inline-flex';
+    const btnGroup = document.getElementById('capture-btn-group');
+    if (btnGroup) btnGroup.style.display = 'flex';
     document.getElementById('preview-actions').style.display = 'none';
     document.getElementById('preview-container').style.display = 'none';
   }
