@@ -497,27 +497,7 @@ class App {
   // Setup MediaPipe Selfie Segmentation & Pose
   setupMediaPipe() {
     this.isProcessingSegment = false;
-    this.isProcessingPose = false;
-
-    // 1. Selfie Segmentation Setup
-    if (window.SelfieSegmentation) {
-      try {
-        this.segmentation = new window.SelfieSegmentation({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
-        });
-        this.segmentation.setOptions({
-          modelSelection: 1 // 1: Landscape model for wide/full-body view
-        });
-        this.segmentation.onResults((results) => {
-          this.latestSegmentationResults = results;
-          this.isProcessingSegment = false;
-        });
-      } catch (err) {
-        console.warn("SelfieSegmentation init warning:", err);
-      }
-    }
-
-    // 2. Pose Setup (High-accuracy single engine with zero WebGL contention)
+    // 1. Unified MediaPipe Pose Setup (Built-in High Quality Person Segmentation + 33 Skeletal Landmarks)
     this.isProcessingPose = false;
     if (window.Pose) {
       try {
@@ -527,12 +507,14 @@ class App {
         this.pose.setOptions({
           modelComplexity: 1,
           smoothLandmarks: true,
-          enableSegmentation: false,
+          enableSegmentation: true,
+          smoothSegmentation: true,
           minDetectionConfidence: 0.35,
           minTrackingConfidence: 0.35
         });
         this.pose.onResults((results) => {
           this.latestPoseResults = results;
+          this.latestSegmentationResults = results; // Unified results contain both poseLandmarks and segmentationMask!
           this.isProcessingPose = false;
         });
       } catch (err) {
