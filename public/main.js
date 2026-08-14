@@ -645,45 +645,6 @@ class App {
         console.warn("Draw canvas warning:", err);
       }
 
-      // Multi-Player Collision Check: Sample 5 points (Center, Top, Bottom, Left, Right)
-      // against offscreen person cutout mask for maximum hit sensitivity and forgiveness
-      if (this.isPlaying && this.offscreenCtx) {
-        const w = this.canvas.width;
-        const h = this.canvas.height;
-
-        this.physicsItems.forEach((item) => {
-          if (item.gameMeta && !item.gameMeta.hit) {
-            const ix = Math.floor(item.position.x);
-            const iy = Math.floor(item.position.y);
-            const radius = Math.round((item.gameMeta.size || 50) * 0.35);
-
-            const samplePoints = [
-              [ix, iy],                         // Center
-              [ix, Math.max(0, iy - radius)],   // Top
-              [ix, Math.min(h - 1, iy + radius)], // Bottom
-              [Math.max(0, ix - radius), iy],   // Left
-              [Math.min(w - 1, ix + radius), iy]  // Right
-            ];
-
-            for (let i = 0; i < samplePoints.length; i++) {
-              const [px, py] = samplePoints[i];
-              if (px >= 0 && px < w && py >= 0 && py < h) {
-                try {
-                  const pixel = this.offscreenCtx.getImageData(px, py, 1, 1).data;
-                  if (pixel && pixel[3] > 40) {
-                    item.gameMeta.hit = true;
-                    this.handleItemHit(item);
-                    break;
-                  }
-                } catch (e) {
-                  // ignore image data read errors
-                }
-              }
-            }
-          }
-        });
-      }
-
       requestAnimationFrame(loop);
     };
 
@@ -892,15 +853,19 @@ class App {
 
           activeSensorKeys.add(key);
 
-          // Update or create Matter.js physical sensor body
+          // Update or create Matter.js physical sensor body (strictly matched to visual circle radius r)
           let sensor = this.sensorPool[key];
-          if (!sensor) {
+          if (!sensor || sensor.targetRadius !== r) {
+            if (sensor) {
+              World.remove(this.physicsWorld, sensor);
+            }
             sensor = Bodies.circle(lx, ly, r, {
               isStatic: true,
               isSensor: true,
               label: key
             });
             sensor.isPlayerSensor = true;
+            sensor.targetRadius = r;
             this.sensorPool[key] = sensor;
             World.add(this.physicsWorld, sensor);
           } else {
