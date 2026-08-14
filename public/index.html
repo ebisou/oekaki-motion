@@ -18,7 +18,7 @@
 
   <!-- Google MediaPipe Tasks Vision (Next-Gen Native Multi-Pose 4-Player & Segmentation) -->
   <script type="module">
-    import { FilesetResolver, PoseLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/index.js";
+    import { FilesetResolver, PoseLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
     window.FilesetResolver = FilesetResolver;
     window.PoseLandmarker = PoseLandmarker;
     window.dispatchEvent(new CustomEvent('mediapipe-tasks-loaded'));

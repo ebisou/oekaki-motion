@@ -505,9 +505,11 @@ class App {
         let PoseLandmarker = window.PoseLandmarker;
 
         if (!FilesetResolver || !PoseLandmarker) {
-          const module = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/index.js");
+          const module = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
           FilesetResolver = module.FilesetResolver;
           PoseLandmarker = module.PoseLandmarker;
+          window.FilesetResolver = FilesetResolver;
+          window.PoseLandmarker = PoseLandmarker;
         }
 
         const vision = await FilesetResolver.forVisionTasks(
@@ -706,9 +708,57 @@ class App {
           this.offscreenCanvas.height = height;
         }
 
-        const maskCanvas = this.latestSegmentationMask.getAsCanvasElement 
-          ? this.latestSegmentationMask.getAsCanvasElement() 
-          : (this.latestSegmentationMask.canvas || this.latestSegmentationMask);
+        if (!this.maskCanvas) {
+          this.maskCanvas = document.createElement('canvas');
+          this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
+        }
+
+        let maskCanvas = null;
+        if (typeof this.latestSegmentationMask.getAsCanvasElement === 'function') {
+          maskCanvas = this.latestSegmentationMask.getAsCanvasElement();
+        } else if (this.latestSegmentationMask.canvas) {
+          maskCanvas = this.latestSegmentationMask.canvas;
+        } else if (typeof this.latestSegmentationMask.getAsUint8Array === 'function') {
+          const mw = this.latestSegmentationMask.width;
+          const mh = this.latestSegmentationMask.height;
+          if (this.maskCanvas.width !== mw || this.maskCanvas.height !== mh) {
+            this.maskCanvas.width = mw;
+            this.maskCanvas.height = mh;
+          }
+          const maskArr = this.latestSegmentationMask.getAsUint8Array();
+          const imgData = this.maskCtx.createImageData(mw, mh);
+          const d = imgData.data;
+          for (let i = 0; i < maskArr.length; i++) {
+            const v = maskArr[i];
+            const p = i * 4;
+            d[p] = 255;
+            d[p + 1] = 255;
+            d[p + 2] = 255;
+            d[p + 3] = v;
+          }
+          this.maskCtx.putImageData(imgData, 0, 0);
+          maskCanvas = this.maskCanvas;
+        } else if (typeof this.latestSegmentationMask.getAsFloat32Array === 'function') {
+          const mw = this.latestSegmentationMask.width;
+          const mh = this.latestSegmentationMask.height;
+          if (this.maskCanvas.width !== mw || this.maskCanvas.height !== mh) {
+            this.maskCanvas.width = mw;
+            this.maskCanvas.height = mh;
+          }
+          const maskArr = this.latestSegmentationMask.getAsFloat32Array();
+          const imgData = this.maskCtx.createImageData(mw, mh);
+          const d = imgData.data;
+          for (let i = 0; i < maskArr.length; i++) {
+            const v = Math.round(maskArr[i] * 255);
+            const p = i * 4;
+            d[p] = 255;
+            d[p + 1] = 255;
+            d[p + 2] = 255;
+            d[p + 3] = v;
+          }
+          this.maskCtx.putImageData(imgData, 0, 0);
+          maskCanvas = this.maskCanvas;
+        }
 
         const oCtx = this.offscreenCtx;
         oCtx.clearRect(0, 0, width, height);
