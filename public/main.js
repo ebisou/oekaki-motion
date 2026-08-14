@@ -517,42 +517,39 @@ class App {
       }
     }
 
-    // 2. Dual-Player Pose Setup (poseLeft for Left Player, poseRight for Right Player)
-    this.isProcessingPoseLeft = false;
-    this.isProcessingPoseRight = false;
-    if (window.Pose) {
-      try {
-        this.poseLeft = new window.Pose({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-        });
-        this.poseLeft.setOptions({
-          modelComplexity: 0,
-          smoothLandmarks: true,
-          enableSegmentation: false,
-          minDetectionConfidence: 0.35,
-          minTrackingConfidence: 0.35
-        });
-        this.poseLeft.onResults((results) => {
-          this.latestPoseLeftResults = results;
-          this.isProcessingPoseLeft = false;
-        });
+    // 2. 4-Player Time-Sliced Pose Setup (Slots 0..3 for up to 4 players simultaneously)
+    this.poseSlots = [];
+    this.latestPoseSlotResults = [null, null, null, null];
+    this.isProcessingSlot = [false, false, false, false];
+    this.slotConfigs = [
+      { startX: 0.00, width: 0.35, color: '#00f3ff', prefix: 'P1' },
+      { startX: 0.22, width: 0.35, color: '#ff007f', prefix: 'P2' },
+      { startX: 0.43, width: 0.35, color: '#00ff66', prefix: 'P3' },
+      { startX: 0.65, width: 0.35, color: '#ffe600', prefix: 'P4' }
+    ];
 
-        this.poseRight = new window.Pose({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-        });
-        this.poseRight.setOptions({
-          modelComplexity: 0,
-          smoothLandmarks: true,
-          enableSegmentation: false,
-          minDetectionConfidence: 0.35,
-          minTrackingConfidence: 0.35
-        });
-        this.poseRight.onResults((results) => {
-          this.latestPoseRightResults = results;
-          this.isProcessingPoseRight = false;
-        });
-      } catch (err) {
-        console.warn("Pose init warning:", err);
+    if (window.Pose) {
+      for (let i = 0; i < 4; i++) {
+        try {
+          const pose = new window.Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+          });
+          pose.setOptions({
+            modelComplexity: 0,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            minDetectionConfidence: 0.35,
+            minTrackingConfidence: 0.35
+          });
+          const slotIdx = i;
+          pose.onResults((results) => {
+            this.latestPoseSlotResults[slotIdx] = results;
+            this.isProcessingSlot[slotIdx] = false;
+          });
+          this.poseSlots.push(pose);
+        } catch (err) {
+          console.warn(`Pose slot ${i} init warning:`, err);
+        }
       }
     }
 
@@ -640,34 +637,45 @@ class App {
         const vw = this.video.videoWidth || 640;
         const vh = this.video.videoHeight || 480;
 
-        if (!this.cropCanvasLeft) {
-          this.cropCanvasLeft = document.createElement('canvas');
-          this.cropCanvasLeft.width = 320;
-          this.cropCanvasLeft.height = 360;
-          this.cropCtxLeft = this.cropCanvasLeft.getContext('2d');
+        // Setup 2 reusable crop canvases for time-sliced 4-player processing
+        if (!this.cropCanvasA) {
+          this.cropCanvasA = document.createElement('canvas');
+          this.cropCanvasA.width = 320;
+          this.cropCanvasA.height = 360;
+          this.cropCtxA = this.cropCanvasA.getContext('2d');
         }
-        if (!this.cropCanvasRight) {
-          this.cropCanvasRight = document.createElement('canvas');
-          this.cropCanvasRight.width = 320;
-          this.cropCanvasRight.height = 360;
-          this.cropCtxRight = this.cropCanvasRight.getContext('2d');
+        if (!this.cropCanvasB) {
+          this.cropCanvasB = document.createElement('canvas');
+          this.cropCanvasB.width = 320;
+          this.cropCanvasB.height = 360;
+          this.cropCtxB = this.cropCanvasB.getContext('2d');
         }
 
-        // 2. Dual-Player Pose Tracking (Left Player crop & Right Player crop)
+        this.renderFrameCount = (this.renderFrameCount || 0) + 1;
+        const isEven = (this.renderFrameCount % 2 === 0);
+
+        // Frame A: Dispatch Slot 0 (P1) and Slot 2 (P3)
+        // Frame B: Dispatch Slot 1 (P2) and Slot 3 (P4)
+        const slotA = isEven ? 0 : 1;
+        const slotB = isEven ? 2 : 3;
+
         try {
-          this.cropCtxLeft.drawImage(this.video, 0, 0, vw * 0.58, vh, 0, 0, 320, 360);
-          this.cropCtxRight.drawImage(this.video, vw * 0.42, 0, vw * 0.58, vh, 0, 0, 320, 360);
+          const cfgA = this.slotConfigs[slotA];
+          const cfgB = this.slotConfigs[slotB];
 
-          if (this.poseLeft && !this.isProcessingPoseLeft) {
-            this.isProcessingPoseLeft = true;
-            this.poseLeft.send({ image: this.cropCanvasLeft }).catch(() => { this.isProcessingPoseLeft = false; });
+          if (cfgA && this.poseSlots[slotA] && !this.isProcessingSlot[slotA]) {
+            this.cropCtxA.drawImage(this.video, vw * cfgA.startX, 0, vw * cfgA.width, vh, 0, 0, 320, 360);
+            this.isProcessingSlot[slotA] = true;
+            this.poseSlots[slotA].send({ image: this.cropCanvasA }).catch(() => { this.isProcessingSlot[slotA] = false; });
           }
-          if (this.poseRight && !this.isProcessingPoseRight) {
-            this.isProcessingPoseRight = true;
-            this.poseRight.send({ image: this.cropCanvasRight }).catch(() => { this.isProcessingPoseRight = false; });
+
+          if (cfgB && this.poseSlots[slotB] && !this.isProcessingSlot[slotB]) {
+            this.cropCtxB.drawImage(this.video, vw * cfgB.startX, 0, vw * cfgB.width, vh, 0, 0, 320, 360);
+            this.isProcessingSlot[slotB] = true;
+            this.poseSlots[slotB].send({ image: this.cropCanvasB }).catch(() => { this.isProcessingSlot[slotB] = false; });
           }
         } catch (e) {
-          // Crop frame draw safeguard
+          // Safeguard
         }
       }
 
@@ -832,14 +840,27 @@ class App {
   }
 
   drawPoseLandmarks(w, h) {
-    const playerColors = ['#00f3ff', '#ff007f', '#00ff66', '#ffe600'];
     const activeSensorKeys = new Set();
     const Bodies = Matter.Bodies;
     const World = Matter.World;
     const scaleFactor = Math.max(0.65, Math.min(1.0, w / 1000));
 
-    const renderSensorCircle = (key, lx, ly, r, color) => {
+    if (!this.targetLerpMap) {
+      this.targetLerpMap = {};
+    }
+
+    const renderSensorCircle = (key, rawLx, rawLy, r, color) => {
       activeSensorKeys.add(key);
+
+      // Smooth 60FPS Lerp interpolation across 30Hz time-sliced detections
+      if (!this.targetLerpMap[key]) {
+        this.targetLerpMap[key] = { x: rawLx, y: rawLy };
+      } else {
+        this.targetLerpMap[key].x += (rawLx - this.targetLerpMap[key].x) * 0.45;
+        this.targetLerpMap[key].y += (rawLy - this.targetLerpMap[key].y) * 0.45;
+      }
+      const lx = this.targetLerpMap[key].x;
+      const ly = this.targetLerpMap[key].y;
 
       // Update or create Matter.js physical sensor body (strictly matched to visual circle radius r)
       let sensor = this.sensorPool[key];
@@ -940,11 +961,12 @@ class App {
       return true;
     };
 
-    // Track Player 1 (Left side of camera / Right side of mirrored screen)
-    extractPlayerPose(this.latestPoseLeftResults, 0.0, 0.58, playerColors[0], 'P1');
-
-    // Track Player 2 (Right side of camera / Left side of mirrored screen)
-    extractPlayerPose(this.latestPoseRightResults, 0.42, 0.58, playerColors[1], 'P2');
+    // Track up to 4 players from the 4 configured slots
+    if (this.slotConfigs && this.latestPoseSlotResults) {
+      this.slotConfigs.forEach((cfg, idx) => {
+        extractPlayerPose(this.latestPoseSlotResults[idx], cfg.startX, cfg.width, cfg.color, cfg.prefix);
+      });
+    }
 
     // Hide any sensors that were not detected in this frame offscreen
     if (this.sensorPool) {
