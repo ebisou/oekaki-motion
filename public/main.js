@@ -256,14 +256,17 @@ class App {
       btn.classList.toggle('active', btn.dataset.theme === theme);
     });
 
+    // Scale gravity proportional to canvas height so falling duration is identical on mobile and PC
+    const heightScale = Math.max(0.35, Math.min(1.0, (this.canvas.height || 720) / 720));
+
     if (theme === 'sea') {
-      this.physicsWorld.gravity.y = 0.015; // Extremely gentle underwater drift (~45px/s)
+      this.physicsWorld.gravity.y = 0.012 * heightScale; // Extremely gentle underwater drift
       this.physicsWorld.gravity.x = 0;
       this.updatePhysicsBoundaries();
       toastIcon.className = 'fa-solid fa-water';
       toastText.textContent = '海モード (低重力・くらげ風ゆったり浮遊)';
     } else if (theme === 'grass') {
-      this.physicsWorld.gravity.y = 0.03; // Gentle uniform falling speed (~120px/s)
+      this.physicsWorld.gravity.y = 0.025 * heightScale; // Gentle uniform falling speed
       this.physicsWorld.gravity.x = 0;
       this.updatePhysicsBoundaries();
       toastIcon.className = 'fa-solid fa-tree';
@@ -292,7 +295,12 @@ class App {
 
     const width = this.canvas.width;
     const height = this.canvas.height;
-    const size = 64; // diameter or width
+
+    // Proportionally scale item size based on canvas dimensions (34px-44px on mobile, 64px on PC)
+    const baseDim = Math.min(width, height);
+    const size = Math.max(34, Math.min(64, Math.round(baseDim * 0.09)));
+    const heightScale = Math.max(0.35, Math.min(1.0, height / 720));
+
     const isSpace = this.currentTheme === 'space';
 
     let x, y, vx, vy;
@@ -300,35 +308,35 @@ class App {
     if (isSpace) {
       // Pick one of 4 outer edges at random: 0: Top, 1: Right, 2: Bottom, 3: Left
       const side = Math.floor(Math.random() * 4);
-      const speed = Math.random() * 0.8 + 2.0; // Smooth velocity 2.0 ~ 2.8
+      const speed = (Math.random() * 0.6 + 1.8) * heightScale;
 
       if (side === 0) { // Top -> Flying Down
-        x = Math.random() * (width - 160) + 80;
-        y = -50;
+        x = Math.random() * Math.max(60, width - 120) + 60;
+        y = -40;
         vx = (Math.random() - 0.5) * 1.0;
         vy = speed;
       } else if (side === 1) { // Right -> Flying Left
-        x = width + 50;
-        y = Math.random() * (height - 160) + 80;
+        x = width + 40;
+        y = Math.random() * Math.max(60, height - 120) + 60;
         vx = -speed;
         vy = (Math.random() - 0.5) * 1.0;
       } else if (side === 2) { // Bottom -> Flying Up
-        x = Math.random() * (width - 160) + 80;
-        y = height + 50;
+        x = Math.random() * Math.max(60, width - 120) + 60;
+        y = height + 40;
         vx = (Math.random() - 0.5) * 1.0;
         vy = -speed;
       } else { // Left -> Flying Right
-        x = -50;
-        y = Math.random() * (height - 160) + 80;
+        x = -40;
+        y = Math.random() * Math.max(60, height - 120) + 60;
         vx = speed;
         vy = (Math.random() - 0.5) * 1.0;
       }
     } else {
       // Normal top drop for Sea and Grassland
-      x = Math.random() * (width - 200) + 100;
+      x = Math.random() * Math.max(60, width - 120) + 60;
       y = -30;
       vx = (Math.random() - 0.5) * 0.3;
-      vy = 0.5; // Start with gentle initial velocity to avoid sudden acceleration burst
+      vy = 0.3 * heightScale; // Start with gentle initial velocity scaled to screen height
     }
 
     const options = {
