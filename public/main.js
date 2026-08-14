@@ -805,30 +805,89 @@ class App {
     if (this.latestPoseResults && (this.latestPoseResults.poseLandmarks || this.latestPoseResults.poseMultiLandmarks)) {
       const poses = this.latestPoseResults.poseMultiLandmarks || [this.latestPoseResults.poseLandmarks];
 
-      // Collision Targets: Head (Nose 0), Left Hand (Wrist 15), Right Hand (Wrist 16), Left Foot (Ankle 27), Right Foot (Ankle 28)
-      const targetLandmarks = [
-        { id: 0, label: 'head', radius: 45 },
-        { id: 15, label: 'hand_l', radius: 40 },
-        { id: 16, label: 'hand_r', radius: 40 },
-        { id: 27, label: 'foot_l', radius: 40 },
-        { id: 28, label: 'foot_r', radius: 40 }
-      ];
+      // Natural hit targets with anatomical centering:
+      // - Head: Centered on forehead/face (raised from nose)
+      // - Hands: Centered on PALM / Knuckles (midpoint of wrist and fingers)
+      // - Feet: Centered on FOOT / Toes (midpoint of ankle and toe)
+      const getTargetPoints = (landmarks) => {
+        const targets = [];
+        
+        // 1. Head (Face/Forehead)
+        const lmNose = landmarks[0];
+        if (lmNose && (lmNose.visibility === undefined || lmNose.visibility >= 0.05)) {
+          targets.push({
+            x: lmNose.x,
+            y: Math.max(0, lmNose.y - 0.035),
+            label: 'head',
+            baseRadius: 46
+          });
+        }
+
+        // 2. Left Hand (Palm center: midpoint of wrist 15 and index 19)
+        const lmW15 = landmarks[15];
+        const lmI19 = landmarks[19] || lmW15;
+        if (lmW15 && (lmW15.visibility === undefined || lmW15.visibility >= 0.05)) {
+          targets.push({
+            x: (lmW15.x + lmI19.x) / 2,
+            y: (lmW15.y + lmI19.y) / 2,
+            label: 'hand_l',
+            baseRadius: 42
+          });
+        }
+
+        // 3. Right Hand (Palm center: midpoint of wrist 16 and index 20)
+        const lmW16 = landmarks[16];
+        const lmI20 = landmarks[20] || lmW16;
+        if (lmW16 && (lmW16.visibility === undefined || lmW16.visibility >= 0.05)) {
+          targets.push({
+            x: (lmW16.x + lmI20.x) / 2,
+            y: (lmW16.y + lmI20.y) / 2,
+            label: 'hand_r',
+            baseRadius: 42
+          });
+        }
+
+        // 4. Left Foot (Foot/Toes: midpoint of ankle 27 and toe 31)
+        const lmA27 = landmarks[27];
+        const lmT31 = landmarks[31] || lmA27;
+        if (lmA27 && (lmA27.visibility === undefined || lmA27.visibility >= 0.05)) {
+          targets.push({
+            x: (lmA27.x + lmT31.x) / 2,
+            y: (lmA27.y + lmT31.y) / 2,
+            label: 'foot_l',
+            baseRadius: 42
+          });
+        }
+
+        // 5. Right Foot (Foot/Toes: midpoint of ankle 28 and toe 32)
+        const lmA28 = landmarks[28];
+        const lmT32 = landmarks[32] || lmA28;
+        if (lmA28 && (lmA28.visibility === undefined || lmA28.visibility >= 0.05)) {
+          targets.push({
+            x: (lmA28.x + lmT32.x) / 2,
+            y: (lmA28.y + lmT32.y) / 2,
+            label: 'foot_r',
+            baseRadius: 42
+          });
+        }
+
+        return targets;
+      };
 
       const Bodies = Matter.Bodies;
       const World = Matter.World;
+      const scaleFactor = Math.max(0.65, Math.min(1.0, w / 1000));
 
       poses.forEach((landmarks, poseIdx) => {
         if (poseIdx >= 4) return; // Up to 4 players
         const color = playerColors[poseIdx];
+        const targets = getTargetPoints(landmarks);
 
-        targetLandmarks.forEach((target) => {
-          const lm = landmarks[target.id];
-          if (!lm || (lm.visibility !== undefined && lm.visibility < 0.05)) return;
-
-          // Compute mirrored screen coordinates: (1 - lm.x) * w
-          const lx = (1 - lm.x) * w;
-          const ly = lm.y * h;
-          const r = target.radius;
+        targets.forEach((target) => {
+          // Compute mirrored screen coordinates: (1 - target.x) * w
+          const lx = (1 - target.x) * w;
+          const ly = target.y * h;
+          const r = Math.round(target.baseRadius * scaleFactor);
           const key = `P_${poseIdx}_${target.label}`;
 
           activeSensorKeys.add(key);
