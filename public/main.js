@@ -183,6 +183,9 @@ class App {
 
     if (this.physicsEngine) {
       this.updatePhysicsBoundaries();
+      if (this.currentTheme) {
+        this.setTheme(this.currentTheme);
+      }
     }
   }
 
@@ -642,8 +645,8 @@ class App {
         console.warn("Draw canvas warning:", err);
       }
 
-      // Multi-Player Collision Check: Sample item center against offscreen person cutout mask
-      // Allows 2+ players (Player 1, Player 2, Player 3, Player 4) to hit items with hands/head/feet/body!
+      // Multi-Player Collision Check: Sample 5 points (Center, Top, Bottom, Left, Right)
+      // against offscreen person cutout mask for maximum hit sensitivity and forgiveness
       if (this.isPlaying && this.offscreenCtx) {
         const w = this.canvas.width;
         const h = this.canvas.height;
@@ -652,17 +655,29 @@ class App {
           if (item.gameMeta && !item.gameMeta.hit) {
             const ix = Math.floor(item.position.x);
             const iy = Math.floor(item.position.y);
+            const radius = Math.round((item.gameMeta.size || 50) * 0.35);
 
-            if (ix >= 0 && ix < w && iy >= 0 && iy < h) {
-              try {
-                const pixel = this.offscreenCtx.getImageData(ix, iy, 1, 1).data;
-                // pixel[3] > 50 indicates an active player cutout pixel on the canvas!
-                if (pixel && pixel[3] > 50) {
-                  item.gameMeta.hit = true;
-                  this.handleItemHit(item);
+            const samplePoints = [
+              [ix, iy],                         // Center
+              [ix, Math.max(0, iy - radius)],   // Top
+              [ix, Math.min(h - 1, iy + radius)], // Bottom
+              [Math.max(0, ix - radius), iy],   // Left
+              [Math.min(w - 1, ix + radius), iy]  // Right
+            ];
+
+            for (let i = 0; i < samplePoints.length; i++) {
+              const [px, py] = samplePoints[i];
+              if (px >= 0 && px < w && py >= 0 && py < h) {
+                try {
+                  const pixel = this.offscreenCtx.getImageData(px, py, 1, 1).data;
+                  if (pixel && pixel[3] > 40) {
+                    item.gameMeta.hit = true;
+                    this.handleItemHit(item);
+                    break;
+                  }
+                } catch (e) {
+                  // ignore image data read errors
                 }
-              } catch (e) {
-                // ignore image data read errors
               }
             }
           }
@@ -1172,6 +1187,8 @@ class App {
             img.src = evt.target.result;
           };
           reader.readAsDataURL(file);
+          // Reset file input value so selecting the same photo triggers change event on iOS/Android
+          e.target.value = '';
         }
       });
     }
@@ -1245,6 +1262,11 @@ class App {
       this.conn.on('open', () => {
         statusEl.textContent = 'PC接続完了';
         statusEl.style.color = '#00ff66';
+      });
+
+      this.conn.on('close', () => {
+        statusEl.textContent = 'PC切断 (再読取必要)';
+        statusEl.style.color = '#ff007f';
       });
 
       this.conn.on('error', () => {
