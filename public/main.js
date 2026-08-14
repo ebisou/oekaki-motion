@@ -517,39 +517,59 @@ class App {
       }
     }
 
-    // 2. 4-Player Time-Sliced Pose Setup (Slots 0..3 for up to 4 players simultaneously)
-    this.poseSlots = [];
-    this.latestPoseSlotResults = [null, null, null, null];
-    this.isProcessingSlot = [false, false, false, false];
-    this.slotConfigs = [
-      { startX: 0.00, width: 0.35, color: '#00f3ff', prefix: 'P1' },
-      { startX: 0.22, width: 0.35, color: '#ff007f', prefix: 'P2' },
-      { startX: 0.43, width: 0.35, color: '#00ff66', prefix: 'P3' },
-      { startX: 0.65, width: 0.35, color: '#ffe600', prefix: 'P4' }
-    ];
+    // 2. Full-Frame Primary Pose & Wide-Overlap Multi-Player Pose Setup
+    this.isProcessingPoseFull = false;
+    this.isProcessingPoseLeft = false;
+    this.isProcessingPoseRight = false;
 
     if (window.Pose) {
-      for (let i = 0; i < 4; i++) {
-        try {
-          const pose = new window.Pose({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-          });
-          pose.setOptions({
-            modelComplexity: 0,
-            smoothLandmarks: true,
-            enableSegmentation: false,
-            minDetectionConfidence: 0.35,
-            minTrackingConfidence: 0.35
-          });
-          const slotIdx = i;
-          pose.onResults((results) => {
-            this.latestPoseSlotResults[slotIdx] = results;
-            this.isProcessingSlot[slotIdx] = false;
-          });
-          this.poseSlots.push(pose);
-        } catch (err) {
-          console.warn(`Pose slot ${i} init warning:`, err);
-        }
+      try {
+        this.poseFull = new window.Pose({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        this.poseFull.setOptions({
+          modelComplexity: 0,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.35,
+          minTrackingConfidence: 0.35
+        });
+        this.poseFull.onResults((results) => {
+          this.latestPoseFullResults = results;
+          this.isProcessingPoseFull = false;
+        });
+
+        this.poseLeft = new window.Pose({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        this.poseLeft.setOptions({
+          modelComplexity: 0,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.35,
+          minTrackingConfidence: 0.35
+        });
+        this.poseLeft.onResults((results) => {
+          this.latestPoseLeftResults = results;
+          this.isProcessingPoseLeft = false;
+        });
+
+        this.poseRight = new window.Pose({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        this.poseRight.setOptions({
+          modelComplexity: 0,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.35,
+          minTrackingConfidence: 0.35
+        });
+        this.poseRight.onResults((results) => {
+          this.latestPoseRightResults = results;
+          this.isProcessingPoseRight = false;
+        });
+      } catch (err) {
+        console.warn("Pose init warning:", err);
       }
     }
 
@@ -634,45 +654,39 @@ class App {
           this.segmentation.send({ image: this.video }).catch(() => { this.isProcessingSegment = false; });
         }
 
+        // 2. Full-Frame Pose (Guaranteed 1-Player & Center Player Backbone)
+        if (this.poseFull && !this.isProcessingPoseFull) {
+          this.isProcessingPoseFull = true;
+          this.poseFull.send({ image: this.video }).catch(() => { this.isProcessingPoseFull = false; });
+        }
+
         const vw = this.video.videoWidth || 640;
         const vh = this.video.videoHeight || 480;
 
-        // Setup 2 reusable crop canvases for time-sliced 4-player processing
-        if (!this.cropCanvasA) {
-          this.cropCanvasA = document.createElement('canvas');
-          this.cropCanvasA.width = 320;
-          this.cropCanvasA.height = 360;
-          this.cropCtxA = this.cropCanvasA.getContext('2d');
+        if (!this.cropCanvasLeft) {
+          this.cropCanvasLeft = document.createElement('canvas');
+          this.cropCanvasLeft.width = 320;
+          this.cropCanvasLeft.height = 360;
+          this.cropCtxLeft = this.cropCanvasLeft.getContext('2d');
         }
-        if (!this.cropCanvasB) {
-          this.cropCanvasB = document.createElement('canvas');
-          this.cropCanvasB.width = 320;
-          this.cropCanvasB.height = 360;
-          this.cropCtxB = this.cropCanvasB.getContext('2d');
+        if (!this.cropCanvasRight) {
+          this.cropCanvasRight = document.createElement('canvas');
+          this.cropCanvasRight.width = 320;
+          this.cropCanvasRight.height = 360;
+          this.cropCtxRight = this.cropCanvasRight.getContext('2d');
         }
 
-        this.renderFrameCount = (this.renderFrameCount || 0) + 1;
-        const isEven = (this.renderFrameCount % 2 === 0);
-
-        // Frame A: Dispatch Slot 0 (P1) and Slot 2 (P3)
-        // Frame B: Dispatch Slot 1 (P2) and Slot 3 (P4)
-        const slotA = isEven ? 0 : 1;
-        const slotB = isEven ? 2 : 3;
-
+        // 3. Wide Overlapping Dual Crops (0.0~0.65 and 0.35~1.0)
         try {
-          const cfgA = this.slotConfigs[slotA];
-          const cfgB = this.slotConfigs[slotB];
+          this.cropCtxLeft.drawImage(this.video, 0, 0, vw * 0.65, vh, 0, 0, 320, 360);
+          this.cropCtxRight.drawImage(this.video, vw * 0.35, 0, vw * 0.65, vh, 0, 0, 320, 360);
 
-          if (cfgA && this.poseSlots[slotA] && !this.isProcessingSlot[slotA]) {
-            this.cropCtxA.drawImage(this.video, vw * cfgA.startX, 0, vw * cfgA.width, vh, 0, 0, 320, 360);
-            this.isProcessingSlot[slotA] = true;
-            this.poseSlots[slotA].send({ image: this.cropCanvasA }).catch(() => { this.isProcessingSlot[slotA] = false; });
+          if (this.poseLeft && !this.isProcessingPoseLeft) {
+            this.isProcessingPoseLeft = true;
+            this.poseLeft.send({ image: this.cropCanvasLeft }).catch(() => { this.isProcessingPoseLeft = false; });
           }
-
-          if (cfgB && this.poseSlots[slotB] && !this.isProcessingSlot[slotB]) {
-            this.cropCtxB.drawImage(this.video, vw * cfgB.startX, 0, vw * cfgB.width, vh, 0, 0, 320, 360);
-            this.isProcessingSlot[slotB] = true;
-            this.poseSlots[slotB].send({ image: this.cropCanvasB }).catch(() => { this.isProcessingSlot[slotB] = false; });
+          if (this.poseRight && !this.isProcessingPoseRight) {
+            this.poseRight.send({ image: this.cropCanvasRight }).catch(() => { this.isProcessingPoseRight = false; });
           }
         } catch (e) {
           // Safeguard
@@ -961,11 +975,20 @@ class App {
       return true;
     };
 
-    // Track up to 4 players from the 4 configured slots
-    if (this.slotConfigs && this.latestPoseSlotResults) {
-      this.slotConfigs.forEach((cfg, idx) => {
-        extractPlayerPose(this.latestPoseSlotResults[idx], cfg.startX, cfg.width, cfg.color, cfg.prefix);
-      });
+    let p1Drawn = false;
+    let p2Drawn = false;
+
+    // 1. Wide sub-crops for multi-player (Left player: Cyan P1, Right player: Pink P2)
+    if (this.latestPoseLeftResults && this.latestPoseLeftResults.poseLandmarks) {
+      p1Drawn = extractPlayerPose(this.latestPoseLeftResults, 0.0, 0.65, '#00f3ff', 'P1');
+    }
+    if (this.latestPoseRightResults && this.latestPoseRightResults.poseLandmarks) {
+      p2Drawn = extractPlayerPose(this.latestPoseRightResults, 0.35, 0.65, '#ff007f', 'P2');
+    }
+
+    // 2. Full Frame Primary Pose Backbone (Guaranteed 1-player & center player)
+    if (!p1Drawn && !p2Drawn && this.latestPoseFullResults && this.latestPoseFullResults.poseLandmarks) {
+      extractPlayerPose(this.latestPoseFullResults, 0.0, 1.0, '#00f3ff', 'P1');
     }
 
     // Hide any sensors that were not detected in this frame offscreen
