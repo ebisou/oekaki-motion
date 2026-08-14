@@ -165,11 +165,14 @@ class App {
     // Setup Matter.js Physics Engine
     this.setupPhysics();
 
-    // Setup MediaPipe
-    this.setupMediaPipe();
-
     // Setup Controls & UI Events
     this.setupPCEvents();
+
+    // Set initial theme
+    this.setTheme('sea');
+
+    // Setup MediaPipe
+    this.setupMediaPipe();
 
     // Initialize PeerJS Host
     this.initPCHostPeer();
@@ -806,10 +809,6 @@ class App {
       }
     }
   }
-
-  drawPoseLandmarks(w, h) {
-    const playerColors = ['#00f3ff', '#ff007f', '#00ff66', '#ffe600'];
-    const activeSensorKeys = new Set();
 
   drawPoseLandmarks(w, h) {
     const playerColors = ['#00f3ff', '#ff007f', '#00ff66', '#ffe600'];
