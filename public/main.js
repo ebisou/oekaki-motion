@@ -494,34 +494,49 @@ class App {
     setTimeout(() => popup.remove(), 1000);
   }
 
-  // Setup MediaPipe Unified Pose & Silhouette Cutout
+  // Setup MediaPipe Tasks Vision (Next-Gen Native 4-Player Multi-Pose & Segmentation)
   setupMediaPipe() {
-    // 1. Unified MediaPipe Pose Setup (Full-Frame High Precision Pose + Full-Body Silhouette Cutout)
-    this.isProcessingPose = false;
+    this.latestPoseLandmarks = [];
+    this.lastVideoTime = -1;
 
-    if (window.Pose) {
+    const initLandmarker = async () => {
       try {
-        this.pose = new window.Pose({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-        });
-        this.pose.setOptions({
-          modelComplexity: 1,
-          smoothLandmarks: true,
-          enableSegmentation: true,
-          smoothSegmentation: true,
-          minDetectionConfidence: 0.35,
+        let FilesetResolver = window.FilesetResolver;
+        let PoseLandmarker = window.PoseLandmarker;
+
+        if (!FilesetResolver || !PoseLandmarker) {
+          const module = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/index.js");
+          FilesetResolver = module.FilesetResolver;
+          PoseLandmarker = module.PoseLandmarker;
+        }
+
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+        );
+
+        this.poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numPoses: 4,
+          outputSegmentationMasks: true,
+          minPoseDetectionConfidence: 0.35,
+          minPosePresenceConfidence: 0.35,
           minTrackingConfidence: 0.35
         });
-        this.pose.onResults((results) => {
-          this.latestPoseResults = results;
-          if (results.segmentationMask) {
-            this.latestSegmentationResults = results;
-          }
-          this.isProcessingPose = false;
-        });
+        console.log("MediaPipe Tasks Vision PoseLandmarker initialized for 4 players!");
       } catch (err) {
-        console.warn("Pose init warning:", err);
+        console.warn("PoseLandmarker init warning:", err);
       }
+    };
+
+    if (window.FilesetResolver && window.PoseLandmarker) {
+      initLandmarker();
+    } else {
+      window.addEventListener('mediapipe-tasks-loaded', () => initLandmarker(), { once: true });
+      initLandmarker();
     }
 
     // Start Webcam with robust multi-stage mobile fallbacks
@@ -597,11 +612,22 @@ class App {
       const delta = Math.min(now - lastTime, 100);
       lastTime = now;
 
-      // Send full video frame to single MediaPipe engine (Zero flicker & 100% full background cutout)
-      if (this.video && (this.video.readyState >= 2 || this.video.videoWidth > 0)) {
-        if (this.pose && !this.isProcessingPose) {
-          this.isProcessingPose = true;
-          this.pose.send({ image: this.video }).catch(() => { this.isProcessingPose = false; });
+      // Synchronous Tasks Vision Frame Detection (Runs on GPU, Zero Deadlock!)
+      if (this.poseLandmarker && this.video && (this.video.readyState >= 2 || this.video.videoWidth > 0)) {
+        const nowTs = performance.now();
+        if (nowTs !== this.lastVideoTime) {
+          this.lastVideoTime = nowTs;
+          try {
+            const results = this.poseLandmarker.detectForVideo(this.video, nowTs);
+            if (results) {
+              this.latestPoseLandmarks = results.landmarks || [];
+              if (results.segmentationMasks && results.segmentationMasks.length > 0) {
+                this.latestSegmentationMask = results.segmentationMasks[0];
+              }
+            }
+          } catch (e) {
+            // Skip frame safely
+          }
         }
       }
 
@@ -665,16 +691,11 @@ class App {
     // 1. Draw Theme Background first
     this.drawThemeBackground(width, height);
 
-    // 2. Draw Mirrored Person with Selfie Segmentation cut-out (or fallback to mirrored video)
+    // 2. Draw Mirrored Person with Cut-out (or fallback to mirrored video)
     let drewCutout = false;
-
     const isVideoReady = this.video && (this.video.readyState >= 1 || this.video.videoWidth > 0);
 
-    if (
-      this.latestSegmentationResults &&
-      this.latestSegmentationResults.segmentationMask &&
-      isVideoReady
-    ) {
+    if (this.latestSegmentationMask && isVideoReady) {
       try {
         if (!this.offscreenCanvas) {
           this.offscreenCanvas = document.createElement('canvas');
@@ -685,115 +706,28 @@ class App {
           this.offscreenCanvas.height = height;
         }
 
-        // Fast intermediate mask canvas for luminance-to-alpha extraction (320x180 for 0.2ms speed)
-        if (!this.maskCanvas) {
-          this.maskCanvas = document.createElement('canvas');
-          this.maskCanvas.width = 320;
-          this.maskCanvas.height = 180;
-          this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
-        }
+        const maskCanvas = this.latestSegmentationMask.getAsCanvasElement 
+          ? this.latestSegmentationMask.getAsCanvasElement() 
+          : (this.latestSegmentationMask.canvas || this.latestSegmentationMask);
 
-        // 1. Draw segmentation mask and convert luminance (Red channel) to true Alpha channel
-        const maskW = 320;
-        const maskH = 180;
-        this.maskCtx.clearRect(0, 0, maskW, maskH);
-        this.maskCtx.drawImage(this.latestSegmentationResults.segmentationMask, 0, 0, maskW, maskH);
-
-        const maskImageData = this.maskCtx.getImageData(0, 0, maskW, maskH);
-        const data = maskImageData.data;
-
-        // 1. Calculate Player 1's envelope in normalized coordinates (0..1)
-        let p1Box = null;
-        if (this.latestPoseResults && this.latestPoseResults.poseLandmarks) {
-          const lm = this.latestPoseResults.poseLandmarks;
-          let minX = 1.0, maxX = 0.0, minY = 1.0, maxY = 0.0;
-          let validPoints = 0;
-          for (let i = 0; i <= 32; i++) {
-            if (lm[i] && (lm[i].visibility === undefined || lm[i].visibility >= 0.1)) {
-              if (lm[i].x < minX) minX = lm[i].x;
-              if (lm[i].x > maxX) maxX = lm[i].x;
-              if (lm[i].y < minY) minY = lm[i].y;
-              if (lm[i].y > maxY) maxY = lm[i].y;
-              validPoints++;
-            }
-          }
-          if (validPoints >= 5) {
-            // Expand with margin for clothing and arm reaches
-            p1Box = {
-              minX: Math.max(0, minX - 0.08),
-              maxX: Math.min(1, maxX + 0.08),
-              minY: Math.max(0, minY - 0.06),
-              maxY: Math.min(1, maxY + 0.06)
-            };
-          }
-        }
-
-        // 2. Scan mask for 2nd person silhouette OUTSIDE Player 1's envelope
-        let p2PixelCount = 0;
-        let p2MinX = maskW, p2MaxX = 0, p2MinY = maskH, p2MaxY = 0;
-        let p2TopX = 0, p2TopY = maskH;
-        let p2LeftX = maskW, p2LeftY = 0;
-        let p2RightX = 0, p2RightY = 0;
-
-        for (let y = 0; y < maskH; y++) {
-          const normY = y / maskH;
-          for (let x = 0; x < maskW; x++) {
-            const normX = x / maskW;
-            const idx = (y * maskW + x) * 4;
-            const val = data[idx];
-            data[idx + 3] = val; // Luminance to Alpha
-
-            // Check if this pixel is OUTSIDE Player 1's entire body envelope and is person pixel
-            const isInsideP1 = p1Box && (normX >= p1Box.minX && normX <= p1Box.maxX && normY >= p1Box.minY && normY <= p1Box.maxY);
-            if (!isInsideP1 && val > 120) {
-              p2PixelCount++;
-              if (x < p2MinX) p2MinX = x;
-              if (x > p2MaxX) p2MaxX = x;
-              if (y < p2MinY) p2MinY = y;
-              if (y > p2MaxY) p2MaxY = y;
-
-              if (y < p2TopY) { p2TopY = y; p2TopX = x; }
-              if (x < p2LeftX && y > maskH * 0.2 && y < maskH * 0.8) { p2LeftX = x; p2LeftY = y; }
-              if (x > p2RightX && y > maskH * 0.2 && y < maskH * 0.8) { p2RightX = x; p2RightY = y; }
-            }
-          }
-        }
-        this.maskCtx.putImageData(maskImageData, 0, 0);
-
-        // A valid 2nd human requires significant separate body mass (> 1800 px) and height (> 55px)
-        if (p2PixelCount > 1800 && (p2MaxX - p2MinX) > 35 && (p2MaxY - p2MinY) > 55) {
-          this.latestPlayer2Silhouette = {
-            head: { x: p2TopX / maskW, y: (p2TopY + 12) / maskH },
-            handL: { x: p2LeftX / maskW, y: (p2LeftY || (p2MinY + 45)) / maskH },
-            handR: { x: p2RightX / maskW, y: (p2RightY || (p2MinY + 45)) / maskH },
-            footL: { x: (p2MinX + 15) / maskW, y: (p2MaxY - 10) / maskH },
-            footR: { x: (p2MaxX - 15) / maskW, y: (p2MaxY - 10) / maskH }
-          };
-        } else {
-          this.latestPlayer2Silhouette = null;
-        }
-
-        // 2. Draw mirrored video to offscreen canvas
         const oCtx = this.offscreenCtx;
         oCtx.clearRect(0, 0, width, height);
-
-        const frameImg = this.latestSegmentationResults.image || this.video;
 
         oCtx.save();
         oCtx.translate(width, 0);
         oCtx.scale(-1, 1);
-        oCtx.drawImage(frameImg, 0, 0, width, height);
+        oCtx.drawImage(this.video, 0, 0, width, height);
 
-        // 3. Cut out background using destination-in composite
-        oCtx.globalCompositeOperation = 'destination-in';
-        oCtx.drawImage(this.maskCanvas, 0, 0, width, height);
+        if (maskCanvas) {
+          oCtx.globalCompositeOperation = 'destination-in';
+          oCtx.drawImage(maskCanvas, 0, 0, width, height);
+        }
         oCtx.restore();
 
-        // 4. Draw cleanly cut-out person onto main canvas over theme background!
         this.ctx.drawImage(this.offscreenCanvas, 0, 0, width, height);
         drewCutout = true;
       } catch (err) {
-        console.warn("Segmentation cutout draw failed, using fallback:", err);
+        // Fallback
       }
     }
 
@@ -806,7 +740,7 @@ class App {
       this.ctx.restore();
     }
 
-    // 3. Draw Player 1 (Cyan) & Player 2 (Pink) Pose Skeleton Landmarks
+    // 3. Draw Native Multi-Player (P1~P4) Pose Skeleton Landmarks & Physics Sensors
     this.drawPoseLandmarks(width, height);
 
     // 4. Draw Matter.js Physics Items
@@ -852,6 +786,7 @@ class App {
   }
 
   drawPoseLandmarks(w, h) {
+    const playerColors = ['#00f3ff', '#ff007f', '#00ff66', '#ffe600'];
     const activeSensorKeys = new Set();
     const Bodies = Matter.Bodies;
     const World = Matter.World;
@@ -918,72 +853,56 @@ class App {
       this.ctx.restore();
     };
 
-    // 1. Primary Pose Detection (Player 1: 100% Solid Cyan #00f3ff)
-    if (this.latestPoseResults && this.latestPoseResults.poseLandmarks) {
-      const lm = this.latestPoseResults.poseLandmarks;
+    // Iterate through all detected players from the neural network (Up to 4 players native!)
+    if (this.latestPoseLandmarks && this.latestPoseLandmarks.length > 0) {
+      this.latestPoseLandmarks.forEach((lm, pIdx) => {
+        if (pIdx >= 4 || !lm) return;
+        const color = playerColors[pIdx];
+        const prefix = `P${pIdx + 1}`;
 
-      // 1. Head (Forehead / Face)
-      if (lm[0] && (lm[0].visibility === undefined || lm[0].visibility >= 0.05)) {
-        const lx = (1 - lm[0].x) * w;
-        const ly = Math.max(0, lm[0].y - 0.035) * h;
-        renderSensorCircle('P1_head', lx, ly, Math.round(46 * scaleFactor), '#00f3ff');
-      }
+        // 1. Head (Forehead / Nose)
+        if (lm[0] && (lm[0].visibility === undefined || lm[0].visibility >= 0.05)) {
+          const lx = (1 - lm[0].x) * w;
+          const ly = Math.max(0, lm[0].y - 0.035) * h;
+          renderSensorCircle(`${prefix}_head`, lx, ly, Math.round(46 * scaleFactor), color);
+        }
 
-      // 2. Left Hand (Palm: Wrist 15 & Index 19)
-      const lmW15 = lm[15];
-      const lmI19 = lm[19] || lmW15;
-      if (lmW15 && (lmW15.visibility === undefined || lmW15.visibility >= 0.05)) {
-        const lx = (1 - (lmW15.x + lmI19.x) / 2) * w;
-        const ly = ((lmW15.y + lmI19.y) / 2) * h;
-        renderSensorCircle('P1_hand_l', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
-      }
+        // 2. Left Hand (Palm: Wrist 15 & Index 19)
+        const lmW15 = lm[15];
+        const lmI19 = lm[19] || lmW15;
+        if (lmW15 && (lmW15.visibility === undefined || lmW15.visibility >= 0.05)) {
+          const lx = (1 - (lmW15.x + lmI19.x) / 2) * w;
+          const ly = ((lmW15.y + lmI19.y) / 2) * h;
+          renderSensorCircle(`${prefix}_hand_l`, lx, ly, Math.round(42 * scaleFactor), color);
+        }
 
-      // 3. Right Hand (Palm: Wrist 16 & Index 20)
-      const lmW16 = lm[16];
-      const lmI20 = lm[20] || lmW16;
-      if (lmW16 && (lmW16.visibility === undefined || lmW16.visibility >= 0.05)) {
-        const lx = (1 - (lmW16.x + lmI20.x) / 2) * w;
-        const ly = ((lmW16.y + lmI20.y) / 2) * h;
-        renderSensorCircle('P1_hand_r', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
-      }
+        // 3. Right Hand (Palm: Wrist 16 & Index 20)
+        const lmW16 = lm[16];
+        const lmI20 = lm[20] || lmW16;
+        if (lmW16 && (lmW16.visibility === undefined || lmW16.visibility >= 0.05)) {
+          const lx = (1 - (lmW16.x + lmI20.x) / 2) * w;
+          const ly = ((lmW16.y + lmI20.y) / 2) * h;
+          renderSensorCircle(`${prefix}_hand_r`, lx, ly, Math.round(42 * scaleFactor), color);
+        }
 
-      // 4. Left Foot (Ankle 27 & Toe 31)
-      const lmA27 = lm[27];
-      const lmT31 = lm[31] || lmA27;
-      if (lmA27 && (lmA27.visibility === undefined || lmA27.visibility >= 0.05)) {
-        const lx = (1 - (lmA27.x + lmT31.x) / 2) * w;
-        const ly = ((lmA27.y + lmT31.y) / 2) * h;
-        renderSensorCircle('P1_foot_l', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
-      }
+        // 4. Left Foot (Ankle 27 & Toe 31)
+        const lmA27 = lm[27];
+        const lmT31 = lm[31] || lmA27;
+        if (lmA27 && (lmA27.visibility === undefined || lmA27.visibility >= 0.05)) {
+          const lx = (1 - (lmA27.x + lmT31.x) / 2) * w;
+          const ly = ((lmA27.y + lmT31.y) / 2) * h;
+          renderSensorCircle(`${prefix}_foot_l`, lx, ly, Math.round(42 * scaleFactor), color);
+        }
 
-      // 5. Right Foot (Ankle 28 & Toe 32)
-      const lmA28 = lm[28];
-      const lmT32 = lm[32] || lmA28;
-      if (lmA28 && (lmA28.visibility === undefined || lmA28.visibility >= 0.05)) {
-        const lx = (1 - (lmA28.x + lmT32.x) / 2) * w;
-        const ly = ((lmA28.y + lmT32.y) / 2) * h;
-        renderSensorCircle('P1_foot_r', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
-      }
-    }
-
-    // 2. Secondary Player Detection (Player 2: Pink #ff007f - Only if a second person is detected)
-    if (this.latestPlayer2Silhouette) {
-      const p2 = this.latestPlayer2Silhouette;
-      if (p2.head) {
-        renderSensorCircle('P2_head', (1 - p2.head.x) * w, p2.head.y * h, Math.round(46 * scaleFactor), '#ff007f');
-      }
-      if (p2.handL) {
-        renderSensorCircle('P2_hand_l', (1 - p2.handL.x) * w, p2.handL.y * h, Math.round(42 * scaleFactor), '#ff007f');
-      }
-      if (p2.handR) {
-        renderSensorCircle('P2_hand_r', (1 - p2.handR.x) * w, p2.handR.y * h, Math.round(42 * scaleFactor), '#ff007f');
-      }
-      if (p2.footL) {
-        renderSensorCircle('P2_foot_l', (1 - p2.footL.x) * w, p2.footL.y * h, Math.round(42 * scaleFactor), '#ff007f');
-      }
-      if (p2.footR) {
-        renderSensorCircle('P2_foot_r', (1 - p2.footR.x) * w, p2.footR.y * h, Math.round(42 * scaleFactor), '#ff007f');
-      }
+        // 5. Right Foot (Ankle 28 & Toe 32)
+        const lmA28 = lm[28];
+        const lmT32 = lm[32] || lmA28;
+        if (lmA28 && (lmA28.visibility === undefined || lmA28.visibility >= 0.05)) {
+          const lx = (1 - (lmA28.x + lmT32.x) / 2) * w;
+          const ly = ((lmA28.y + lmT32.y) / 2) * h;
+          renderSensorCircle(`${prefix}_foot_r`, lx, ly, Math.round(42 * scaleFactor), color);
+        }
+      });
     }
 
     // Hide any sensors that were not detected in this frame offscreen

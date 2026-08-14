@@ -16,10 +16,13 @@
   <!-- Custom Styles -->
   <link rel="stylesheet" href="style.css">
 
-  <!-- MediaPipe Pose (Includes Built-in High-Quality Segmentation) -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <!-- Google MediaPipe Tasks Vision (Next-Gen Native Multi-Pose 4-Player & Segmentation) -->
+  <script type="module">
+    import { FilesetResolver, PoseLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm/index.js";
+    window.FilesetResolver = FilesetResolver;
+    window.PoseLandmarker = PoseLandmarker;
+    window.dispatchEvent(new CustomEvent('mediapipe-tasks-loaded'));
+  </script>
 
   <!-- Matter.js Physics Engine -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js" crossorigin="anonymous"></script>
