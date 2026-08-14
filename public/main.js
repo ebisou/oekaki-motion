@@ -624,7 +624,7 @@ class App {
             if (results) {
               this.latestPoseLandmarks = results.landmarks || [];
               if (results.segmentationMasks && results.segmentationMasks.length > 0) {
-                this.latestSegmentationMask = results.segmentationMasks[0];
+                this.latestSegmentationMasks = results.segmentationMasks;
               }
             }
           } catch (e) {
@@ -697,7 +697,7 @@ class App {
     let drewCutout = false;
     const isVideoReady = this.video && (this.video.readyState >= 1 || this.video.videoWidth > 0);
 
-    if (this.latestSegmentationMask && isVideoReady) {
+    if (this.latestSegmentationMasks && this.latestSegmentationMasks.length > 0 && isVideoReady) {
       try {
         if (!this.offscreenCanvas) {
           this.offscreenCanvas = document.createElement('canvas');
@@ -713,69 +713,89 @@ class App {
           this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
         }
 
-        let maskCanvas = null;
-        if (typeof this.latestSegmentationMask.getAsCanvasElement === 'function') {
-          maskCanvas = this.latestSegmentationMask.getAsCanvasElement();
-        } else if (this.latestSegmentationMask.canvas) {
-          maskCanvas = this.latestSegmentationMask.canvas;
-        } else if (typeof this.latestSegmentationMask.getAsUint8Array === 'function') {
-          const mw = this.latestSegmentationMask.width;
-          const mh = this.latestSegmentationMask.height;
-          if (this.maskCanvas.width !== mw || this.maskCanvas.height !== mh) {
-            this.maskCanvas.width = mw;
-            this.maskCanvas.height = mh;
+        // Render all detected person masks into combined alpha mask
+        let hasValidMask = false;
+        for (let mIdx = 0; mIdx < this.latestSegmentationMasks.length; mIdx++) {
+          const mask = this.latestSegmentationMasks[mIdx];
+          if (!mask) continue;
+
+          if (typeof mask.getAsFloat32Array === 'function') {
+            const mw = mask.width;
+            const mh = mask.height;
+            if (this.maskCanvas.width !== mw || this.maskCanvas.height !== mh) {
+              this.maskCanvas.width = mw;
+              this.maskCanvas.height = mh;
+            }
+            const maskArr = mask.getAsFloat32Array();
+            const imgData = this.maskCtx.createImageData(mw, mh);
+            const d = imgData.data;
+            for (let i = 0; i < maskArr.length; i++) {
+              const v = maskArr[i] > 0.35 ? Math.round(maskArr[i] * 255) : 0;
+              const p = i * 4;
+              d[p] = 255;
+              d[p + 1] = 255;
+              d[p + 2] = 255;
+              d[p + 3] = v;
+            }
+            this.maskCtx.putImageData(imgData, 0, 0);
+            hasValidMask = true;
+          } else if (typeof mask.getAsUint8Array === 'function') {
+            const mw = mask.width;
+            const mh = mask.height;
+            if (this.maskCanvas.width !== mw || this.maskCanvas.height !== mh) {
+              this.maskCanvas.width = mw;
+              this.maskCanvas.height = mh;
+            }
+            const maskArr = mask.getAsUint8Array();
+            const imgData = this.maskCtx.createImageData(mw, mh);
+            const d = imgData.data;
+            for (let i = 0; i < maskArr.length; i++) {
+              const v = maskArr[i] > 90 ? maskArr[i] : 0;
+              const p = i * 4;
+              d[p] = 255;
+              d[p + 1] = 255;
+              d[p + 2] = 255;
+              d[p + 3] = v;
+            }
+            this.maskCtx.putImageData(imgData, 0, 0);
+            hasValidMask = true;
+          } else if (typeof mask.getAsCanvasElement === 'function' || mask.canvas) {
+            const rawC = typeof mask.getAsCanvasElement === 'function' ? mask.getAsCanvasElement() : mask.canvas;
+            const mw = rawC.width || 256;
+            const mh = rawC.height || 256;
+            if (this.maskCanvas.width !== mw || this.maskCanvas.height !== mh) {
+              this.maskCanvas.width = mw;
+              this.maskCanvas.height = mh;
+            }
+            this.maskCtx.clearRect(0, 0, mw, mh);
+            this.maskCtx.drawImage(rawC, 0, 0, mw, mh);
+            const imgData = this.maskCtx.getImageData(0, 0, mw, mh);
+            const d = imgData.data;
+            for (let i = 0; i < d.length; i += 4) {
+              d[i + 3] = d[i] > 90 ? d[i] : 0;
+            }
+            this.maskCtx.putImageData(imgData, 0, 0);
+            hasValidMask = true;
           }
-          const maskArr = this.latestSegmentationMask.getAsUint8Array();
-          const imgData = this.maskCtx.createImageData(mw, mh);
-          const d = imgData.data;
-          for (let i = 0; i < maskArr.length; i++) {
-            const v = maskArr[i];
-            const p = i * 4;
-            d[p] = 255;
-            d[p + 1] = 255;
-            d[p + 2] = 255;
-            d[p + 3] = v;
-          }
-          this.maskCtx.putImageData(imgData, 0, 0);
-          maskCanvas = this.maskCanvas;
-        } else if (typeof this.latestSegmentationMask.getAsFloat32Array === 'function') {
-          const mw = this.latestSegmentationMask.width;
-          const mh = this.latestSegmentationMask.height;
-          if (this.maskCanvas.width !== mw || this.maskCanvas.height !== mh) {
-            this.maskCanvas.width = mw;
-            this.maskCanvas.height = mh;
-          }
-          const maskArr = this.latestSegmentationMask.getAsFloat32Array();
-          const imgData = this.maskCtx.createImageData(mw, mh);
-          const d = imgData.data;
-          for (let i = 0; i < maskArr.length; i++) {
-            const v = Math.round(maskArr[i] * 255);
-            const p = i * 4;
-            d[p] = 255;
-            d[p + 1] = 255;
-            d[p + 2] = 255;
-            d[p + 3] = v;
-          }
-          this.maskCtx.putImageData(imgData, 0, 0);
-          maskCanvas = this.maskCanvas;
+          if (hasValidMask) break; // First multi-person combined mask is ready
         }
 
-        const oCtx = this.offscreenCtx;
-        oCtx.clearRect(0, 0, width, height);
+        if (hasValidMask) {
+          const oCtx = this.offscreenCtx;
+          oCtx.clearRect(0, 0, width, height);
 
-        oCtx.save();
-        oCtx.translate(width, 0);
-        oCtx.scale(-1, 1);
-        oCtx.drawImage(this.video, 0, 0, width, height);
+          oCtx.save();
+          oCtx.translate(width, 0);
+          oCtx.scale(-1, 1);
+          oCtx.drawImage(this.video, 0, 0, width, height);
 
-        if (maskCanvas) {
           oCtx.globalCompositeOperation = 'destination-in';
-          oCtx.drawImage(maskCanvas, 0, 0, width, height);
-        }
-        oCtx.restore();
+          oCtx.drawImage(this.maskCanvas, 0, 0, width, height);
+          oCtx.restore();
 
-        this.ctx.drawImage(this.offscreenCanvas, 0, 0, width, height);
-        drewCutout = true;
+          this.ctx.drawImage(this.offscreenCanvas, 0, 0, width, height);
+          drewCutout = true;
+        }
       } catch (err) {
         // Fallback
       }
