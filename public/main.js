@@ -558,18 +558,36 @@ class App {
       }
     }
 
-    // Start Webcam (default facingMode: user for front camera on smartphones / laptops)
+    // Start Webcam with robust multi-stage mobile fallbacks
     this.currentCameraFacing = 'user';
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: this.currentCameraFacing, width: 1280, height: 720 }, audio: false })
+    this.video.muted = true;
+    this.video.playsInline = true;
+    this.video.setAttribute('playsinline', '');
+    this.video.setAttribute('webkit-playsinline', '');
+    this.video.setAttribute('muted', '');
+    this.video.setAttribute('autoplay', '');
+
+    const startCamera = (constraints) => {
+      return navigator.mediaDevices.getUserMedia(constraints)
         .then((stream) => {
           this.webcamStream = stream;
           this.video.srcObject = stream;
-          this.video.play();
-          this.startRenderLoop();
+          return this.video.play().catch(e => console.warn("Video play catch:", e));
+        });
+    };
+
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      // 1. Try preferred front camera with ideal dimensions
+      startCamera({ video: { facingMode: this.currentCameraFacing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+        .catch(() => {
+          // 2. Fallback to basic facingMode constraint
+          return startCamera({ video: { facingMode: this.currentCameraFacing }, audio: false });
         })
-        .catch((err) => {
-          console.warn("Camera access warning:", err);
+        .catch(() => {
+          // 3. Fallback to any available video stream
+          return startCamera({ video: true, audio: false });
+        })
+        .finally(() => {
           this.startRenderLoop();
         });
     } else {
@@ -583,19 +601,23 @@ class App {
       this.webcamStream.getTracks().forEach(track => track.stop());
     }
 
+    const startCamera = (constraints) => {
+      return navigator.mediaDevices.getUserMedia(constraints)
+        .then((stream) => {
+          this.webcamStream = stream;
+          this.video.srcObject = stream;
+          return this.video.play().catch(e => console.warn("Video play catch:", e));
+        });
+    };
+
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({
-        video: { facingMode: this.currentCameraFacing, width: 1280, height: 720 },
-        audio: false
-      })
-      .then((stream) => {
-        this.webcamStream = stream;
-        this.video.srcObject = stream;
-        this.video.play();
-      })
-      .catch((err) => {
-        console.warn("Camera toggle warning:", err);
-      });
+      startCamera({ video: { facingMode: this.currentCameraFacing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
+        .catch(() => {
+          return startCamera({ video: { facingMode: this.currentCameraFacing }, audio: false });
+        })
+        .catch((err) => {
+          console.warn("Camera toggle warning:", err);
+        });
     }
   }
 
@@ -688,11 +710,12 @@ class App {
     // 2. Draw Mirrored Person with Selfie Segmentation cut-out (or fallback to mirrored video)
     let drewCutout = false;
 
+    const isVideoReady = this.video && (this.video.readyState >= 1 || this.video.videoWidth > 0);
+
     if (
       this.latestSegmentationResults &&
       this.latestSegmentationResults.segmentationMask &&
-      this.video &&
-      this.video.readyState >= 2
+      isVideoReady
     ) {
       try {
         if (!this.offscreenCanvas) {
@@ -730,7 +753,7 @@ class App {
       }
     }
 
-    if (!drewCutout && this.video && this.video.readyState >= 2) {
+    if (!drewCutout && isVideoReady) {
       // Safe Fallback: draw mirrored full video stream over theme background
       this.ctx.save();
       this.ctx.translate(width, 0);

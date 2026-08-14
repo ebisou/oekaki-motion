@@ -87,8 +87,8 @@
         <div class="canvas-wrapper">
           <canvas id="game-canvas"></canvas>
 
-          <!-- Hidden Webcam Video Element -->
-          <video id="webcam-video" playsinline style="display: none;"></video>
+          <!-- Hidden Webcam Video Element (autoplay, playsinline, muted for iOS Safari & Android mobile browsers) -->
+          <video id="webcam-video" autoplay playsinline muted style="position: fixed; top: -9999px; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none;"></video>
 
           <!-- Player Legend overlay -->
           <div class="players-overlay">
