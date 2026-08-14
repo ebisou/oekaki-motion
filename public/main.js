@@ -702,13 +702,33 @@ class App {
         const maskImageData = this.maskCtx.getImageData(0, 0, maskW, maskH);
         const data = maskImageData.data;
 
-        // Determine Player 1's position to isolate Player 2 on the opposite side
-        let p1NormX = 0.5;
-        if (this.latestPoseResults && this.latestPoseResults.poseLandmarks && this.latestPoseResults.poseLandmarks[0]) {
-          p1NormX = this.latestPoseResults.poseLandmarks[0].x;
+        // 1. Calculate Player 1's envelope in normalized coordinates (0..1)
+        let p1Box = null;
+        if (this.latestPoseResults && this.latestPoseResults.poseLandmarks) {
+          const lm = this.latestPoseResults.poseLandmarks;
+          let minX = 1.0, maxX = 0.0, minY = 1.0, maxY = 0.0;
+          let validPoints = 0;
+          for (let i = 0; i <= 32; i++) {
+            if (lm[i] && (lm[i].visibility === undefined || lm[i].visibility >= 0.1)) {
+              if (lm[i].x < minX) minX = lm[i].x;
+              if (lm[i].x > maxX) maxX = lm[i].x;
+              if (lm[i].y < minY) minY = lm[i].y;
+              if (lm[i].y > maxY) maxY = lm[i].y;
+              validPoints++;
+            }
+          }
+          if (validPoints >= 5) {
+            // Expand with margin for clothing and arm reaches
+            p1Box = {
+              minX: Math.max(0, minX - 0.08),
+              maxX: Math.min(1, maxX + 0.08),
+              minY: Math.max(0, minY - 0.06),
+              maxY: Math.min(1, maxY + 0.06)
+            };
+          }
         }
 
-        const isP1OnLeft = (p1NormX < 0.5);
+        // 2. Scan mask for 2nd person silhouette OUTSIDE Player 1's envelope
         let p2PixelCount = 0;
         let p2MinX = maskW, p2MaxX = 0, p2MinY = maskH, p2MaxY = 0;
         let p2TopX = 0, p2TopY = maskH;
@@ -716,14 +736,16 @@ class App {
         let p2RightX = 0, p2RightY = 0;
 
         for (let y = 0; y < maskH; y++) {
+          const normY = y / maskH;
           for (let x = 0; x < maskW; x++) {
+            const normX = x / maskW;
             const idx = (y * maskW + x) * 4;
             const val = data[idx];
             data[idx + 3] = val; // Luminance to Alpha
 
-            // Check if there is a 2nd person on the opposite side of Player 1
-            const isOppositeSide = isP1OnLeft ? (x > maskW * 0.58) : (x < maskW * 0.42);
-            if (isOppositeSide && val > 120) {
+            // Check if this pixel is OUTSIDE Player 1's entire body envelope and is person pixel
+            const isInsideP1 = p1Box && (normX >= p1Box.minX && normX <= p1Box.maxX && normY >= p1Box.minY && normY <= p1Box.maxY);
+            if (!isInsideP1 && val > 120) {
               p2PixelCount++;
               if (x < p2MinX) p2MinX = x;
               if (x > p2MaxX) p2MaxX = x;
@@ -738,12 +760,12 @@ class App {
         }
         this.maskCtx.putImageData(maskImageData, 0, 0);
 
-        // If a 2nd person is clearly present on the opposite side:
-        if (p2PixelCount > 800 && (p2MaxX - p2MinX) > 30 && (p2MaxY - p2MinY) > 40) {
+        // A valid 2nd human requires significant separate body mass (> 1800 px) and height (> 55px)
+        if (p2PixelCount > 1800 && (p2MaxX - p2MinX) > 35 && (p2MaxY - p2MinY) > 55) {
           this.latestPlayer2Silhouette = {
             head: { x: p2TopX / maskW, y: (p2TopY + 12) / maskH },
-            handL: { x: p2LeftX / maskW, y: (p2LeftY || (p2MinY + 40)) / maskH },
-            handR: { x: p2RightX / maskW, y: (p2RightY || (p2MinY + 40)) / maskH },
+            handL: { x: p2LeftX / maskW, y: (p2LeftY || (p2MinY + 45)) / maskH },
+            handR: { x: p2RightX / maskW, y: (p2RightY || (p2MinY + 45)) / maskH },
             footL: { x: (p2MinX + 15) / maskW, y: (p2MaxY - 10) / maskH },
             footR: { x: (p2MaxX - 15) / maskW, y: (p2MaxY - 10) / maskH }
           };
