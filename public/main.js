@@ -578,9 +578,11 @@ class App {
   // Render & Physics Loop
   startRenderLoop() {
     let lastTime = performance.now();
+    let physicsAccumulator = 0;
+    const fixedTimestep = 1000 / 60; // Fixed 60Hz timestep (16.66ms) to prevent 120Hz mobile screens from running 2x fast!
 
     const loop = (now) => {
-      const delta = now - lastTime;
+      const delta = Math.min(now - lastTime, 100);
       lastTime = now;
 
       // Send video frames to MediaPipe engines safely
@@ -595,9 +597,27 @@ class App {
         }
       }
 
-      // Update Matter.js Engine and clean fallen items only when game is actively playing
+      // Update Matter.js Engine with fixed 60Hz accumulator
       if (this.isPlaying) {
-        Matter.Engine.update(this.physicsEngine, Math.min(delta, 33));
+        physicsAccumulator += delta;
+
+        // Scale max speed limit relative to screen height
+        const heightScale = Math.max(0.3, Math.min(1.0, (this.canvas.height || 720) / 720));
+        const maxVy = this.currentTheme === 'sea' ? (1.0 * heightScale) : (1.6 * heightScale);
+
+        while (physicsAccumulator >= fixedTimestep) {
+          // Clamp downward falling speed so items never shoot down fast on any device
+          if (this.currentTheme !== 'space' && this.physicsItems) {
+            this.physicsItems.forEach((body) => {
+              if (body.velocity.y > maxVy) {
+                Matter.Body.setVelocity(body, { x: body.velocity.x, y: maxVy });
+              }
+            });
+          }
+
+          Matter.Engine.update(this.physicsEngine, fixedTimestep);
+          physicsAccumulator -= fixedTimestep;
+        }
 
         // Auto-remove items that fell past the floor or flew offscreen
         const margin = 150;
