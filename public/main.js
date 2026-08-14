@@ -517,47 +517,42 @@ class App {
       }
     }
 
-    // 2. Pose Setup (Head & Feet Tracking)
+    // 2. Dual-Player Pose Setup (poseLeft for Left Player, poseRight for Right Player)
+    this.isProcessingPoseLeft = false;
+    this.isProcessingPoseRight = false;
     if (window.Pose) {
       try {
-        this.pose = new window.Pose({
+        this.poseLeft = new window.Pose({
           locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
         });
-        this.pose.setOptions({
-          modelComplexity: 1,
+        this.poseLeft.setOptions({
+          modelComplexity: 0,
           smoothLandmarks: true,
           enableSegmentation: false,
-          minDetectionConfidence: 0.4,
-          minTrackingConfidence: 0.4
-        });
-        this.pose.onResults((results) => {
-          this.latestPoseResults = results;
-          this.isProcessingPose = false;
-        });
-      } catch (err) {
-        console.warn("Pose init warning:", err);
-      }
-    }
-
-    // 3. Hands Setup (Multi-Hand Tracking for up to 6 hands / multi-player 2+ players!)
-    this.isProcessingHands = false;
-    if (window.Hands) {
-      try {
-        this.hands = new window.Hands({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-        });
-        this.hands.setOptions({
-          maxNumHands: 6,
-          modelComplexity: 1,
           minDetectionConfidence: 0.35,
           minTrackingConfidence: 0.35
         });
-        this.hands.onResults((results) => {
-          this.latestHandsResults = results;
-          this.isProcessingHands = false;
+        this.poseLeft.onResults((results) => {
+          this.latestPoseLeftResults = results;
+          this.isProcessingPoseLeft = false;
+        });
+
+        this.poseRight = new window.Pose({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+        });
+        this.poseRight.setOptions({
+          modelComplexity: 0,
+          smoothLandmarks: true,
+          enableSegmentation: false,
+          minDetectionConfidence: 0.35,
+          minTrackingConfidence: 0.35
+        });
+        this.poseRight.onResults((results) => {
+          this.latestPoseRightResults = results;
+          this.isProcessingPoseRight = false;
         });
       } catch (err) {
-        console.warn("Hands init warning:", err);
+        console.warn("Pose init warning:", err);
       }
     }
 
@@ -635,18 +630,44 @@ class App {
       lastTime = now;
 
       // Send video frames to MediaPipe engines safely
-      if (this.video && this.video.readyState >= 2) {
+      if (this.video && (this.video.readyState >= 2 || this.video.videoWidth > 0)) {
+        // 1. SelfieSegmentation for background cutout
         if (this.segmentation && !this.isProcessingSegment) {
           this.isProcessingSegment = true;
           this.segmentation.send({ image: this.video }).catch(() => { this.isProcessingSegment = false; });
         }
-        if (this.pose && !this.isProcessingPose) {
-          this.isProcessingPose = true;
-          this.pose.send({ image: this.video }).catch(() => { this.isProcessingPose = false; });
+
+        const vw = this.video.videoWidth || 640;
+        const vh = this.video.videoHeight || 480;
+
+        if (!this.cropCanvasLeft) {
+          this.cropCanvasLeft = document.createElement('canvas');
+          this.cropCanvasLeft.width = 320;
+          this.cropCanvasLeft.height = 360;
+          this.cropCtxLeft = this.cropCanvasLeft.getContext('2d');
         }
-        if (this.hands && !this.isProcessingHands) {
-          this.isProcessingHands = true;
-          this.hands.send({ image: this.video }).catch(() => { this.isProcessingHands = false; });
+        if (!this.cropCanvasRight) {
+          this.cropCanvasRight = document.createElement('canvas');
+          this.cropCanvasRight.width = 320;
+          this.cropCanvasRight.height = 360;
+          this.cropCtxRight = this.cropCanvasRight.getContext('2d');
+        }
+
+        // 2. Dual-Player Pose Tracking (Left Player crop & Right Player crop)
+        try {
+          this.cropCtxLeft.drawImage(this.video, 0, 0, vw * 0.58, vh, 0, 0, 320, 360);
+          this.cropCtxRight.drawImage(this.video, vw * 0.42, 0, vw * 0.58, vh, 0, 0, 320, 360);
+
+          if (this.poseLeft && !this.isProcessingPoseLeft) {
+            this.isProcessingPoseLeft = true;
+            this.poseLeft.send({ image: this.cropCanvasLeft }).catch(() => { this.isProcessingPoseLeft = false; });
+          }
+          if (this.poseRight && !this.isProcessingPoseRight) {
+            this.isProcessingPoseRight = true;
+            this.poseRight.send({ image: this.cropCanvasRight }).catch(() => { this.isProcessingPoseRight = false; });
+          }
+        } catch (e) {
+          // Crop frame draw safeguard
         }
       }
 
@@ -810,104 +831,6 @@ class App {
     }
   }
 
-  // Fast 60FPS multi-player body clustering from SelfieSegmentation mask
-  detectSilhouetteClusters(w, h) {
-    if (!this.offscreenCanvas || !this.offscreenCtx) return [];
-    
-    // Fast 64x36 downsampled canvas for instant (<1ms) multi-body projection analysis
-    if (!this.analysisCanvas) {
-      this.analysisCanvas = document.createElement('canvas');
-      this.analysisCanvas.width = 64;
-      this.analysisCanvas.height = 36;
-      this.analysisCtx = this.analysisCanvas.getContext('2d', { willReadFrequently: true });
-    }
-
-    const gw = 64;
-    const gh = 36;
-    this.analysisCtx.clearRect(0, 0, gw, gh);
-    this.analysisCtx.drawImage(this.offscreenCanvas, 0, 0, gw, gh);
-
-    let imgData;
-    try {
-      imgData = this.analysisCtx.getImageData(0, 0, gw, gh).data;
-    } catch (e) {
-      return [];
-    }
-
-    const colDensity = new Array(gw).fill(0);
-
-    // Compute column density across horizontal axis
-    for (let x = 0; x < gw; x++) {
-      for (let y = 0; y < gh; y++) {
-        const alpha = imgData[(y * gw + x) * 4 + 3];
-        if (alpha > 40) {
-          colDensity[x]++;
-        }
-      }
-    }
-
-    // Identify distinct person clusters (continuous spans of pixels separated by gaps)
-    const clusters = [];
-    let inCluster = false;
-    let startX = 0;
-
-    for (let x = 0; x < gw; x++) {
-      if (colDensity[x] >= 2) {
-        if (!inCluster) {
-          inCluster = true;
-          startX = x;
-        }
-      } else {
-        if (inCluster) {
-          inCluster = false;
-          if (x - startX >= 3) {
-            clusters.push({ startX, endX: x - 1 });
-          }
-        }
-      }
-    }
-    if (inCluster && gw - startX >= 3) {
-      clusters.push({ startX, endX: gw - 1 });
-    }
-
-    // Extract Head, Left Hand, Right Hand, and Feet for each detected player
-    const results = [];
-    clusters.forEach((cl) => {
-      let minY = gh, maxY = 0;
-      let topX = (cl.startX + cl.endX) / 2;
-      let leftY = Math.round(gh * 0.45), rightY = Math.round(gh * 0.45);
-      let minX = cl.endX, maxX = cl.startX;
-
-      for (let x = cl.startX; x <= cl.endX; x++) {
-        for (let y = 0; y < gh; y++) {
-          const alpha = imgData[(y * gw + x) * 4 + 3];
-          if (alpha > 40) {
-            if (y < minY) {
-              minY = y;
-              topX = x;
-            }
-            if (y > maxY) maxY = y;
-            if (x < minX) { minX = x; leftY = y; }
-            if (x > maxX) { maxX = x; rightY = y; }
-          }
-        }
-      }
-
-      if (maxY > minY + 3) {
-        const spanH = maxY - minY;
-        results.push({
-          head: { x: (topX / gw) * w, y: Math.max(10, ((minY + 2) / gh) * h) },
-          handL: { x: Math.max(10, (minX / gw) * w), y: Math.max(20, Math.min(h - 20, (leftY / gh) * h)) },
-          handR: { x: Math.min(w - 10, (maxX / gw) * w), y: Math.max(20, Math.min(h - 20, (rightY / gh) * h)) },
-          footL: { x: (cl.startX / gw) * w + 15, y: Math.min(h - 15, (maxY / gh) * h) },
-          footR: { x: (cl.endX / gw) * w - 15, y: Math.min(h - 15, (maxY / gh) * h) }
-        });
-      }
-    });
-
-    return results;
-  }
-
   drawPoseLandmarks(w, h) {
     const playerColors = ['#00f3ff', '#ff007f', '#00ff66', '#ffe600'];
     const activeSensorKeys = new Set();
@@ -962,42 +885,66 @@ class App {
       this.ctx.restore();
     };
 
-    // 1. Detect ALL players from Segmentation Mask (Works for 2, 3, 4+ players simultaneously!)
-    const clusters = this.detectSilhouetteClusters(w, h);
+    const extractPlayerPose = (results, cropStartX, cropWidth, color, playerPrefix) => {
+      if (!results || !results.poseLandmarks) return false;
+      const lm = results.poseLandmarks;
 
-    if (clusters.length > 0) {
-      clusters.forEach((player, pIdx) => {
-        if (pIdx >= 4) return;
-        const color = playerColors[pIdx % 4];
-
-        // Head circle
-        renderSensorCircle(`P${pIdx}_head`, player.head.x, player.head.y, Math.round(46 * scaleFactor), color);
-        // Left Hand circle
-        renderSensorCircle(`P${pIdx}_hand_l`, player.handL.x, player.handL.y, Math.round(42 * scaleFactor), color);
-        // Right Hand circle
-        renderSensorCircle(`P${pIdx}_hand_r`, player.handR.x, player.handR.y, Math.round(42 * scaleFactor), color);
-      });
-    } else if (this.latestPoseResults && this.latestPoseResults.poseLandmarks) {
-      // Fallback single-player Pose detection if segmentation is still initializing
-      const lm = this.latestPoseResults.poseLandmarks;
-      if (lm[0] && (lm[0].visibility === undefined || lm[0].visibility >= 0.05)) {
-        const lx = (1 - lm[0].x) * w;
+      // 1. Head (Forehead / Face)
+      if (lm[0] && (lm[0].visibility === undefined || lm[0].visibility >= 0.1)) {
+        const vx = cropStartX + lm[0].x * cropWidth;
+        const lx = (1 - vx) * w;
         const ly = Math.max(0, lm[0].y - 0.035) * h;
-        renderSensorCircle('Pose_head', lx, ly, Math.round(46 * scaleFactor), playerColors[0]);
+        renderSensorCircle(`${playerPrefix}_head`, lx, ly, Math.round(46 * scaleFactor), color);
       }
-      if (lm[15] && (lm[15].visibility === undefined || lm[15].visibility >= 0.05)) {
-        const idxLm = lm[19] || lm[15];
-        const lx = (1 - (lm[15].x + idxLm.x) / 2) * w;
-        const ly = ((lm[15].y + idxLm.y) / 2) * h;
-        renderSensorCircle('Pose_hand_l', lx, ly, Math.round(42 * scaleFactor), playerColors[0]);
+
+      // 2. Left Hand (Palm: Wrist 15 & Index 19)
+      const lmW15 = lm[15];
+      const lmI19 = lm[19] || lmW15;
+      if (lmW15 && (lmW15.visibility === undefined || lmW15.visibility >= 0.05)) {
+        const vx = cropStartX + ((lmW15.x + lmI19.x) / 2) * cropWidth;
+        const lx = (1 - vx) * w;
+        const ly = ((lmW15.y + lmI19.y) / 2) * h;
+        renderSensorCircle(`${playerPrefix}_hand_l`, lx, ly, Math.round(42 * scaleFactor), color);
       }
-      if (lm[16] && (lm[16].visibility === undefined || lm[16].visibility >= 0.05)) {
-        const idxLm = lm[20] || lm[16];
-        const lx = (1 - (lm[16].x + idxLm.x) / 2) * w;
-        const ly = ((lm[16].y + idxLm.y) / 2) * h;
-        renderSensorCircle('Pose_hand_r', lx, ly, Math.round(42 * scaleFactor), playerColors[0]);
+
+      // 3. Right Hand (Palm: Wrist 16 & Index 20)
+      const lmW16 = lm[16];
+      const lmI20 = lm[20] || lmW16;
+      if (lmW16 && (lmW16.visibility === undefined || lmW16.visibility >= 0.05)) {
+        const vx = cropStartX + ((lmW16.x + lmI20.x) / 2) * cropWidth;
+        const lx = (1 - vx) * w;
+        const ly = ((lmW16.y + lmI20.y) / 2) * h;
+        renderSensorCircle(`${playerPrefix}_hand_r`, lx, ly, Math.round(42 * scaleFactor), color);
       }
-    }
+
+      // 4. Left Foot (Ankle 27 & Toe 31)
+      const lmA27 = lm[27];
+      const lmT31 = lm[31] || lmA27;
+      if (lmA27 && (lmA27.visibility === undefined || lmA27.visibility >= 0.05)) {
+        const vx = cropStartX + ((lmA27.x + lmT31.x) / 2) * cropWidth;
+        const lx = (1 - vx) * w;
+        const ly = ((lmA27.y + lmT31.y) / 2) * h;
+        renderSensorCircle(`${playerPrefix}_foot_l`, lx, ly, Math.round(42 * scaleFactor), color);
+      }
+
+      // 5. Right Foot (Ankle 28 & Toe 32)
+      const lmA28 = lm[28];
+      const lmT32 = lm[32] || lmA28;
+      if (lmA28 && (lmA28.visibility === undefined || lmA28.visibility >= 0.05)) {
+        const vx = cropStartX + ((lmA28.x + lmT32.x) / 2) * cropWidth;
+        const lx = (1 - vx) * w;
+        const ly = ((lmA28.y + lmT32.y) / 2) * h;
+        renderSensorCircle(`${playerPrefix}_foot_r`, lx, ly, Math.round(42 * scaleFactor), color);
+      }
+
+      return true;
+    };
+
+    // Track Player 1 (Left side of camera / Right side of mirrored screen)
+    extractPlayerPose(this.latestPoseLeftResults, 0.0, 0.58, playerColors[0], 'P1');
+
+    // Track Player 2 (Right side of camera / Left side of mirrored screen)
+    extractPlayerPose(this.latestPoseRightResults, 0.42, 0.58, playerColors[1], 'P2');
 
     // Hide any sensors that were not detected in this frame offscreen
     if (this.sensorPool) {
