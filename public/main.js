@@ -497,8 +497,13 @@ class App {
   // Setup MediaPipe Selfie Segmentation & Pose
   setupMediaPipe() {
     this.isProcessingSegment = false;
-    // 1. Unified MediaPipe Pose Setup (Built-in High Quality Person Segmentation + 33 Skeletal Landmarks)
+    // 1. Unified MediaPipe Pose Setup (Sequential Alternating Dual-Player Tracking + Full Segmentation)
     this.isProcessingPose = false;
+    this.cropPhaseIndex = 0;
+    this.latestPoseResultsLeft = null;
+    this.latestPoseResultsRight = null;
+    this.latestPoseResultsFull = null;
+
     if (window.Pose) {
       try {
         this.pose = new window.Pose({
@@ -513,8 +518,17 @@ class App {
           minTrackingConfidence: 0.35
         });
         this.pose.onResults((results) => {
-          this.latestPoseResults = results;
-          this.latestSegmentationResults = results; // Unified results contain both poseLandmarks and segmentationMask!
+          if (this.currentCropPhase === 'left') {
+            this.latestPoseResultsLeft = results;
+          } else if (this.currentCropPhase === 'right') {
+            this.latestPoseResultsRight = results;
+          } else {
+            this.latestPoseResultsFull = results;
+          }
+
+          if (results.segmentationMask) {
+            this.latestSegmentationResults = results;
+          }
           this.isProcessingPose = false;
         });
       } catch (err) {
@@ -595,18 +609,47 @@ class App {
       const delta = Math.min(now - lastTime, 100);
       lastTime = now;
 
-      // Send video frames to MediaPipe engines safely
+      // Send video frames to single MediaPipe engine sequentially
       if (this.video && (this.video.readyState >= 2 || this.video.videoWidth > 0)) {
-        // 1. SelfieSegmentation for background cutout
-        if (this.segmentation && !this.isProcessingSegment) {
-          this.isProcessingSegment = true;
-          this.segmentation.send({ image: this.video }).catch(() => { this.isProcessingSegment = false; });
-        }
-
-        // 2. High-Precision Full-Frame Pose
         if (this.pose && !this.isProcessingPose) {
           this.isProcessingPose = true;
-          this.pose.send({ image: this.video }).catch(() => { this.isProcessingPose = false; });
+
+          const vw = this.video.videoWidth || 640;
+          const vh = this.video.videoHeight || 480;
+
+          if (!this.cropCanvasLeft) {
+            this.cropCanvasLeft = document.createElement('canvas');
+            this.cropCanvasLeft.width = 320;
+            this.cropCanvasLeft.height = 360;
+            this.cropCtxLeft = this.cropCanvasLeft.getContext('2d');
+          }
+          if (!this.cropCanvasRight) {
+            this.cropCanvasRight = document.createElement('canvas');
+            this.cropCanvasRight.width = 320;
+            this.cropCanvasRight.height = 360;
+            this.cropCtxRight = this.cropCanvasRight.getContext('2d');
+          }
+
+          // Alternating sequential cycle: Left Crop -> Right Crop -> Full Frame
+          const step = (this.cropPhaseIndex || 0) % 3;
+          this.cropPhaseIndex = (this.cropPhaseIndex || 0) + 1;
+
+          try {
+            if (step === 0) {
+              this.currentCropPhase = 'left';
+              this.cropCtxLeft.drawImage(this.video, 0, 0, vw * 0.65, vh, 0, 0, 320, 360);
+              this.pose.send({ image: this.cropCanvasLeft }).catch(() => { this.isProcessingPose = false; });
+            } else if (step === 1) {
+              this.currentCropPhase = 'right';
+              this.cropCtxRight.drawImage(this.video, vw * 0.35, 0, vw * 0.65, vh, 0, 0, 320, 360);
+              this.pose.send({ image: this.cropCanvasRight }).catch(() => { this.isProcessingPose = false; });
+            } else {
+              this.currentCropPhase = 'full';
+              this.pose.send({ image: this.video }).catch(() => { this.isProcessingPose = false; });
+            }
+          } catch (e) {
+            this.isProcessingPose = false;
+          }
         }
       }
 
@@ -797,8 +840,22 @@ class App {
     const World = Matter.World;
     const scaleFactor = Math.max(0.65, Math.min(1.0, w / 1000));
 
-    const renderSensorCircle = (key, lx, ly, r, color) => {
+    if (!this.targetLerpMap) {
+      this.targetLerpMap = {};
+    }
+
+    const renderSensorCircle = (key, rawLx, rawLy, r, color) => {
       activeSensorKeys.add(key);
+
+      // Smooth 60FPS Lerp interpolation across sequential alternating updates
+      if (!this.targetLerpMap[key]) {
+        this.targetLerpMap[key] = { x: rawLx, y: rawLy };
+      } else {
+        this.targetLerpMap[key].x += (rawLx - this.targetLerpMap[key].x) * 0.45;
+        this.targetLerpMap[key].y += (rawLy - this.targetLerpMap[key].y) * 0.45;
+      }
+      const lx = this.targetLerpMap[key].x;
+      const ly = this.targetLerpMap[key].y;
 
       // Update or create Matter.js physical sensor body (strictly matched to visual circle radius r)
       let sensor = this.sensorPool[key];
@@ -844,52 +901,83 @@ class App {
       this.ctx.restore();
     };
 
-    // 1. Primary Pose Detection (Player 1)
-    if (this.latestPoseResults && this.latestPoseResults.poseLandmarks) {
-      const lm = this.latestPoseResults.poseLandmarks;
+    const extractPlayerPose = (results, cropStartX, cropWidth, color, playerPrefix) => {
+      if (!results || !results.poseLandmarks) return false;
+      const lm = results.poseLandmarks;
+      let found = false;
 
       // 1. Head (Forehead / Face)
-      if (lm[0] && (lm[0].visibility === undefined || lm[0].visibility >= 0.05)) {
-        const lx = (1 - lm[0].x) * w;
+      if (lm[0] && (lm[0].visibility === undefined || lm[0].visibility >= 0.1)) {
+        const vx = cropStartX + lm[0].x * cropWidth;
+        const lx = (1 - vx) * w;
         const ly = Math.max(0, lm[0].y - 0.035) * h;
-        renderSensorCircle('P1_head', lx, ly, Math.round(46 * scaleFactor), '#00f3ff');
+        renderSensorCircle(`${playerPrefix}_head`, lx, ly, Math.round(46 * scaleFactor), color);
+        found = true;
       }
 
       // 2. Left Hand (Palm: Wrist 15 & Index 19)
       const lmW15 = lm[15];
       const lmI19 = lm[19] || lmW15;
       if (lmW15 && (lmW15.visibility === undefined || lmW15.visibility >= 0.05)) {
-        const lx = (1 - (lmW15.x + lmI19.x) / 2) * w;
+        const vx = cropStartX + ((lmW15.x + lmI19.x) / 2) * cropWidth;
+        const lx = (1 - vx) * w;
         const ly = ((lmW15.y + lmI19.y) / 2) * h;
-        renderSensorCircle('P1_hand_l', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
+        renderSensorCircle(`${playerPrefix}_hand_l`, lx, ly, Math.round(42 * scaleFactor), color);
+        found = true;
       }
 
       // 3. Right Hand (Palm: Wrist 16 & Index 20)
       const lmW16 = lm[16];
       const lmI20 = lm[20] || lmW16;
       if (lmW16 && (lmW16.visibility === undefined || lmW16.visibility >= 0.05)) {
-        const lx = (1 - (lmW16.x + lmI20.x) / 2) * w;
+        const vx = cropStartX + ((lmW16.x + lmI20.x) / 2) * cropWidth;
+        const lx = (1 - vx) * w;
         const ly = ((lmW16.y + lmI20.y) / 2) * h;
-        renderSensorCircle('P1_hand_r', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
+        renderSensorCircle(`${playerPrefix}_hand_r`, lx, ly, Math.round(42 * scaleFactor), color);
+        found = true;
       }
 
       // 4. Left Foot (Ankle 27 & Toe 31)
       const lmA27 = lm[27];
       const lmT31 = lm[31] || lmA27;
       if (lmA27 && (lmA27.visibility === undefined || lmA27.visibility >= 0.05)) {
-        const lx = (1 - (lmA27.x + lmT31.x) / 2) * w;
+        const vx = cropStartX + ((lmA27.x + lmT31.x) / 2) * cropWidth;
+        const lx = (1 - vx) * w;
         const ly = ((lmA27.y + lmT31.y) / 2) * h;
-        renderSensorCircle('P1_foot_l', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
+        renderSensorCircle(`${playerPrefix}_foot_l`, lx, ly, Math.round(42 * scaleFactor), color);
+        found = true;
       }
 
       // 5. Right Foot (Ankle 28 & Toe 32)
       const lmA28 = lm[28];
       const lmT32 = lm[32] || lmA28;
       if (lmA28 && (lmA28.visibility === undefined || lmA28.visibility >= 0.05)) {
-        const lx = (1 - (lmA28.x + lmT32.x) / 2) * w;
+        const vx = cropStartX + ((lmA28.x + lmT32.x) / 2) * cropWidth;
+        const lx = (1 - vx) * w;
         const ly = ((lmA28.y + lmT32.y) / 2) * h;
-        renderSensorCircle('P1_foot_r', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
+        renderSensorCircle(`${playerPrefix}_foot_r`, lx, ly, Math.round(42 * scaleFactor), color);
+        found = true;
       }
+
+      return found;
+    };
+
+    let p1Drawn = false;
+    let p2Drawn = false;
+
+    // Track Player 1 (Left Player) with Cyan circles (#00f3ff)
+    if (this.latestPoseResultsLeft) {
+      p1Drawn = extractPlayerPose(this.latestPoseResultsLeft, 0.0, 0.65, '#00f3ff', 'P1');
+    }
+
+    // Track Player 2 (Right Player) with Pink circles (#ff007f)
+    if (this.latestPoseResultsRight) {
+      p2Drawn = extractPlayerPose(this.latestPoseResultsRight, 0.35, 0.65, '#ff007f', 'P2');
+    }
+
+    // Fallback: If only 1 player is playing (or standing in the center), use Full Frame pose!
+    if (!p1Drawn && !p2Drawn && this.latestPoseResultsFull) {
+      extractPlayerPose(this.latestPoseResultsFull, 0.0, 1.0, '#00f3ff', 'P1');
     }
 
     // Hide any sensors that were not detected in this frame offscreen
