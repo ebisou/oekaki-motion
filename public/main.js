@@ -517,56 +517,23 @@ class App {
       }
     }
 
-    // 2. Full-Frame Primary Pose & Wide-Overlap Multi-Player Pose Setup
-    this.isProcessingPoseFull = false;
-    this.isProcessingPoseLeft = false;
-    this.isProcessingPoseRight = false;
-
+    // 2. Pose Setup (High-accuracy single engine with zero WebGL contention)
+    this.isProcessingPose = false;
     if (window.Pose) {
       try {
-        this.poseFull = new window.Pose({
+        this.pose = new window.Pose({
           locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
         });
-        this.poseFull.setOptions({
-          modelComplexity: 0,
+        this.pose.setOptions({
+          modelComplexity: 1,
           smoothLandmarks: true,
           enableSegmentation: false,
           minDetectionConfidence: 0.35,
           minTrackingConfidence: 0.35
         });
-        this.poseFull.onResults((results) => {
-          this.latestPoseFullResults = results;
-          this.isProcessingPoseFull = false;
-        });
-
-        this.poseLeft = new window.Pose({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-        });
-        this.poseLeft.setOptions({
-          modelComplexity: 0,
-          smoothLandmarks: true,
-          enableSegmentation: false,
-          minDetectionConfidence: 0.35,
-          minTrackingConfidence: 0.35
-        });
-        this.poseLeft.onResults((results) => {
-          this.latestPoseLeftResults = results;
-          this.isProcessingPoseLeft = false;
-        });
-
-        this.poseRight = new window.Pose({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-        });
-        this.poseRight.setOptions({
-          modelComplexity: 0,
-          smoothLandmarks: true,
-          enableSegmentation: false,
-          minDetectionConfidence: 0.35,
-          minTrackingConfidence: 0.35
-        });
-        this.poseRight.onResults((results) => {
-          this.latestPoseRightResults = results;
-          this.isProcessingPoseRight = false;
+        this.pose.onResults((results) => {
+          this.latestPoseResults = results;
+          this.isProcessingPose = false;
         });
       } catch (err) {
         console.warn("Pose init warning:", err);
@@ -654,42 +621,10 @@ class App {
           this.segmentation.send({ image: this.video }).catch(() => { this.isProcessingSegment = false; });
         }
 
-        // 2. Full-Frame Pose (Guaranteed 1-Player & Center Player Backbone)
-        if (this.poseFull && !this.isProcessingPoseFull) {
-          this.isProcessingPoseFull = true;
-          this.poseFull.send({ image: this.video }).catch(() => { this.isProcessingPoseFull = false; });
-        }
-
-        const vw = this.video.videoWidth || 640;
-        const vh = this.video.videoHeight || 480;
-
-        if (!this.cropCanvasLeft) {
-          this.cropCanvasLeft = document.createElement('canvas');
-          this.cropCanvasLeft.width = 320;
-          this.cropCanvasLeft.height = 360;
-          this.cropCtxLeft = this.cropCanvasLeft.getContext('2d');
-        }
-        if (!this.cropCanvasRight) {
-          this.cropCanvasRight = document.createElement('canvas');
-          this.cropCanvasRight.width = 320;
-          this.cropCanvasRight.height = 360;
-          this.cropCtxRight = this.cropCanvasRight.getContext('2d');
-        }
-
-        // 3. Wide Overlapping Dual Crops (0.0~0.65 and 0.35~1.0)
-        try {
-          this.cropCtxLeft.drawImage(this.video, 0, 0, vw * 0.65, vh, 0, 0, 320, 360);
-          this.cropCtxRight.drawImage(this.video, vw * 0.35, 0, vw * 0.65, vh, 0, 0, 320, 360);
-
-          if (this.poseLeft && !this.isProcessingPoseLeft) {
-            this.isProcessingPoseLeft = true;
-            this.poseLeft.send({ image: this.cropCanvasLeft }).catch(() => { this.isProcessingPoseLeft = false; });
-          }
-          if (this.poseRight && !this.isProcessingPoseRight) {
-            this.poseRight.send({ image: this.cropCanvasRight }).catch(() => { this.isProcessingPoseRight = false; });
-          }
-        } catch (e) {
-          // Safeguard
+        // 2. High-Precision Full-Frame Pose
+        if (this.pose && !this.isProcessingPose) {
+          this.isProcessingPose = true;
+          this.pose.send({ image: this.video }).catch(() => { this.isProcessingPose = false; });
         }
       }
 
@@ -859,22 +794,8 @@ class App {
     const World = Matter.World;
     const scaleFactor = Math.max(0.65, Math.min(1.0, w / 1000));
 
-    if (!this.targetLerpMap) {
-      this.targetLerpMap = {};
-    }
-
-    const renderSensorCircle = (key, rawLx, rawLy, r, color) => {
+    const renderSensorCircle = (key, lx, ly, r, color) => {
       activeSensorKeys.add(key);
-
-      // Smooth 60FPS Lerp interpolation across 30Hz time-sliced detections
-      if (!this.targetLerpMap[key]) {
-        this.targetLerpMap[key] = { x: rawLx, y: rawLy };
-      } else {
-        this.targetLerpMap[key].x += (rawLx - this.targetLerpMap[key].x) * 0.45;
-        this.targetLerpMap[key].y += (rawLy - this.targetLerpMap[key].y) * 0.45;
-      }
-      const lx = this.targetLerpMap[key].x;
-      const ly = this.targetLerpMap[key].y;
 
       // Update or create Matter.js physical sensor body (strictly matched to visual circle radius r)
       let sensor = this.sensorPool[key];
@@ -920,75 +841,52 @@ class App {
       this.ctx.restore();
     };
 
-    const extractPlayerPose = (results, cropStartX, cropWidth, color, playerPrefix) => {
-      if (!results || !results.poseLandmarks) return false;
-      const lm = results.poseLandmarks;
+    // 1. Primary Pose Detection (Player 1)
+    if (this.latestPoseResults && this.latestPoseResults.poseLandmarks) {
+      const lm = this.latestPoseResults.poseLandmarks;
 
       // 1. Head (Forehead / Face)
-      if (lm[0] && (lm[0].visibility === undefined || lm[0].visibility >= 0.1)) {
-        const vx = cropStartX + lm[0].x * cropWidth;
-        const lx = (1 - vx) * w;
+      if (lm[0] && (lm[0].visibility === undefined || lm[0].visibility >= 0.05)) {
+        const lx = (1 - lm[0].x) * w;
         const ly = Math.max(0, lm[0].y - 0.035) * h;
-        renderSensorCircle(`${playerPrefix}_head`, lx, ly, Math.round(46 * scaleFactor), color);
+        renderSensorCircle('P1_head', lx, ly, Math.round(46 * scaleFactor), '#00f3ff');
       }
 
       // 2. Left Hand (Palm: Wrist 15 & Index 19)
       const lmW15 = lm[15];
       const lmI19 = lm[19] || lmW15;
       if (lmW15 && (lmW15.visibility === undefined || lmW15.visibility >= 0.05)) {
-        const vx = cropStartX + ((lmW15.x + lmI19.x) / 2) * cropWidth;
-        const lx = (1 - vx) * w;
+        const lx = (1 - (lmW15.x + lmI19.x) / 2) * w;
         const ly = ((lmW15.y + lmI19.y) / 2) * h;
-        renderSensorCircle(`${playerPrefix}_hand_l`, lx, ly, Math.round(42 * scaleFactor), color);
+        renderSensorCircle('P1_hand_l', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
       }
 
       // 3. Right Hand (Palm: Wrist 16 & Index 20)
       const lmW16 = lm[16];
       const lmI20 = lm[20] || lmW16;
       if (lmW16 && (lmW16.visibility === undefined || lmW16.visibility >= 0.05)) {
-        const vx = cropStartX + ((lmW16.x + lmI20.x) / 2) * cropWidth;
-        const lx = (1 - vx) * w;
+        const lx = (1 - (lmW16.x + lmI20.x) / 2) * w;
         const ly = ((lmW16.y + lmI20.y) / 2) * h;
-        renderSensorCircle(`${playerPrefix}_hand_r`, lx, ly, Math.round(42 * scaleFactor), color);
+        renderSensorCircle('P1_hand_r', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
       }
 
       // 4. Left Foot (Ankle 27 & Toe 31)
       const lmA27 = lm[27];
       const lmT31 = lm[31] || lmA27;
       if (lmA27 && (lmA27.visibility === undefined || lmA27.visibility >= 0.05)) {
-        const vx = cropStartX + ((lmA27.x + lmT31.x) / 2) * cropWidth;
-        const lx = (1 - vx) * w;
+        const lx = (1 - (lmA27.x + lmT31.x) / 2) * w;
         const ly = ((lmA27.y + lmT31.y) / 2) * h;
-        renderSensorCircle(`${playerPrefix}_foot_l`, lx, ly, Math.round(42 * scaleFactor), color);
+        renderSensorCircle('P1_foot_l', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
       }
 
       // 5. Right Foot (Ankle 28 & Toe 32)
       const lmA28 = lm[28];
       const lmT32 = lm[32] || lmA28;
       if (lmA28 && (lmA28.visibility === undefined || lmA28.visibility >= 0.05)) {
-        const vx = cropStartX + ((lmA28.x + lmT32.x) / 2) * cropWidth;
-        const lx = (1 - vx) * w;
+        const lx = (1 - (lmA28.x + lmT32.x) / 2) * w;
         const ly = ((lmA28.y + lmT32.y) / 2) * h;
-        renderSensorCircle(`${playerPrefix}_foot_r`, lx, ly, Math.round(42 * scaleFactor), color);
+        renderSensorCircle('P1_foot_r', lx, ly, Math.round(42 * scaleFactor), '#00f3ff');
       }
-
-      return true;
-    };
-
-    let p1Drawn = false;
-    let p2Drawn = false;
-
-    // 1. Wide sub-crops for multi-player (Left player: Cyan P1, Right player: Pink P2)
-    if (this.latestPoseLeftResults && this.latestPoseLeftResults.poseLandmarks) {
-      p1Drawn = extractPlayerPose(this.latestPoseLeftResults, 0.0, 0.65, '#00f3ff', 'P1');
-    }
-    if (this.latestPoseRightResults && this.latestPoseRightResults.poseLandmarks) {
-      p2Drawn = extractPlayerPose(this.latestPoseRightResults, 0.35, 0.65, '#ff007f', 'P2');
-    }
-
-    // 2. Full Frame Primary Pose Backbone (Guaranteed 1-player & center player)
-    if (!p1Drawn && !p2Drawn && this.latestPoseFullResults && this.latestPoseFullResults.poseLandmarks) {
-      extractPlayerPose(this.latestPoseFullResults, 0.0, 1.0, '#00f3ff', 'P1');
     }
 
     // Hide any sensors that were not detected in this frame offscreen
