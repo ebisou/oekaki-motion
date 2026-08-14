@@ -518,17 +518,17 @@ class App {
 
         this.poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
             delegate: "GPU"
           },
           runningMode: "VIDEO",
           numPoses: 4,
           outputSegmentationMasks: true,
-          minPoseDetectionConfidence: 0.35,
-          minPosePresenceConfidence: 0.35,
-          minTrackingConfidence: 0.35
+          minPoseDetectionConfidence: 0.25,
+          minPosePresenceConfidence: 0.25,
+          minTrackingConfidence: 0.25
         });
-        console.log("MediaPipe Tasks Vision PoseLandmarker initialized for 4 players!");
+        console.log("MediaPipe Tasks Vision PoseLandmarker (Full Model) initialized for 4 players!");
       } catch (err) {
         console.warn("PoseLandmarker init warning:", err);
       }
@@ -869,12 +869,12 @@ class App {
     const renderSensorCircle = (key, rawLx, rawLy, r, color) => {
       activeSensorKeys.add(key);
 
-      // Smooth 60FPS Lerp interpolation
+      // Smooth 60FPS Lerp interpolation (tuned to 0.58 for responsive zero-lag physics)
       if (!this.targetLerpMap[key]) {
         this.targetLerpMap[key] = { x: rawLx, y: rawLy };
       } else {
-        this.targetLerpMap[key].x += (rawLx - this.targetLerpMap[key].x) * 0.45;
-        this.targetLerpMap[key].y += (rawLy - this.targetLerpMap[key].y) * 0.45;
+        this.targetLerpMap[key].x += (rawLx - this.targetLerpMap[key].x) * 0.58;
+        this.targetLerpMap[key].y += (rawLy - this.targetLerpMap[key].y) * 0.58;
       }
       const lx = this.targetLerpMap[key].x;
       const ly = this.targetLerpMap[key].y;
@@ -923,9 +923,18 @@ class App {
       this.ctx.restore();
     };
 
-    // Iterate through all detected players from the neural network (Up to 4 players native!)
+    // Sort detected poses horizontally from screen Left to screen Right so Player 1 and Player 2 never swap colors!
     if (this.latestPoseLandmarks && this.latestPoseLandmarks.length > 0) {
-      this.latestPoseLandmarks.forEach((lm, pIdx) => {
+      const sortedPoses = [...this.latestPoseLandmarks]
+        .filter(lm => lm && lm.length > 0 && lm[0])
+        .sort((a, b) => {
+          // Screen X position is (1 - lm[0].x) * w
+          const ax = (1 - a[0].x);
+          const bx = (1 - b[0].x);
+          return ax - bx;
+        });
+
+      sortedPoses.forEach((lm, pIdx) => {
         if (pIdx >= 4 || !lm) return;
         const color = playerColors[pIdx];
         const prefix = `P${pIdx + 1}`;
