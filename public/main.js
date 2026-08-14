@@ -514,7 +514,7 @@ class App {
       }
     }
 
-    // 2. Pose Setup (numPoses: 4)
+    // 2. Pose Setup (Head & Feet Tracking)
     if (window.Pose) {
       try {
         this.pose = new window.Pose({
@@ -525,8 +525,7 @@ class App {
           smoothLandmarks: true,
           enableSegmentation: false,
           minDetectionConfidence: 0.4,
-          minTrackingConfidence: 0.4,
-          numPoses: 4
+          minTrackingConfidence: 0.4
         });
         this.pose.onResults((results) => {
           this.latestPoseResults = results;
@@ -534,6 +533,28 @@ class App {
         });
       } catch (err) {
         console.warn("Pose init warning:", err);
+      }
+    }
+
+    // 3. Hands Setup (Multi-Hand Tracking for up to 6 hands / multi-player 2+ players!)
+    this.isProcessingHands = false;
+    if (window.Hands) {
+      try {
+        this.hands = new window.Hands({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+        this.hands.setOptions({
+          maxNumHands: 6,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.35,
+          minTrackingConfidence: 0.35
+        });
+        this.hands.onResults((results) => {
+          this.latestHandsResults = results;
+          this.isProcessingHands = false;
+        });
+      } catch (err) {
+        console.warn("Hands init warning:", err);
       }
     }
 
@@ -597,6 +618,10 @@ class App {
         if (this.pose && !this.isProcessingPose) {
           this.isProcessingPose = true;
           this.pose.send({ image: this.video }).catch(() => { this.isProcessingPose = false; });
+        }
+        if (this.hands && !this.isProcessingHands) {
+          this.isProcessingHands = true;
+          this.hands.send({ image: this.video }).catch(() => { this.isProcessingHands = false; });
         }
       }
 
@@ -763,143 +788,136 @@ class App {
     const playerColors = ['#00f3ff', '#ff007f', '#00ff66', '#ffe600'];
     const activeSensorKeys = new Set();
 
-    if (this.latestPoseResults && (this.latestPoseResults.poseLandmarks || this.latestPoseResults.poseMultiLandmarks)) {
-      const poses = this.latestPoseResults.poseMultiLandmarks || [this.latestPoseResults.poseLandmarks];
+  drawPoseLandmarks(w, h) {
+    const playerColors = ['#00f3ff', '#ff007f', '#00ff66', '#ffe600'];
+    const activeSensorKeys = new Set();
+    const Bodies = Matter.Bodies;
+    const World = Matter.World;
+    const scaleFactor = Math.max(0.65, Math.min(1.0, w / 1000));
 
-      // Natural hit targets with anatomical centering:
-      // - Head: Centered on forehead/face (raised from nose)
-      // - Hands: Centered on PALM / Knuckles (midpoint of wrist and fingers)
-      // - Feet: Centered on FOOT / Toes (midpoint of ankle and toe)
-      const getTargetPoints = (landmarks) => {
-        const targets = [];
-        
-        // 1. Head (Face/Forehead)
-        const lmNose = landmarks[0];
-        if (lmNose && (lmNose.visibility === undefined || lmNose.visibility >= 0.05)) {
-          targets.push({
-            x: lmNose.x,
-            y: Math.max(0, lmNose.y - 0.035),
-            label: 'head',
-            baseRadius: 46
-          });
+    const renderSensorCircle = (key, lx, ly, r, color) => {
+      activeSensorKeys.add(key);
+
+      // Update or create Matter.js physical sensor body (strictly matched to visual circle radius r)
+      let sensor = this.sensorPool[key];
+      if (!sensor || sensor.targetRadius !== r) {
+        if (sensor) {
+          World.remove(this.physicsWorld, sensor);
         }
-
-        // 2. Left Hand (Palm center: midpoint of wrist 15 and index 19)
-        const lmW15 = landmarks[15];
-        const lmI19 = landmarks[19] || lmW15;
-        if (lmW15 && (lmW15.visibility === undefined || lmW15.visibility >= 0.05)) {
-          targets.push({
-            x: (lmW15.x + lmI19.x) / 2,
-            y: (lmW15.y + lmI19.y) / 2,
-            label: 'hand_l',
-            baseRadius: 42
-          });
-        }
-
-        // 3. Right Hand (Palm center: midpoint of wrist 16 and index 20)
-        const lmW16 = landmarks[16];
-        const lmI20 = landmarks[20] || lmW16;
-        if (lmW16 && (lmW16.visibility === undefined || lmW16.visibility >= 0.05)) {
-          targets.push({
-            x: (lmW16.x + lmI20.x) / 2,
-            y: (lmW16.y + lmI20.y) / 2,
-            label: 'hand_r',
-            baseRadius: 42
-          });
-        }
-
-        // 4. Left Foot (Foot/Toes: midpoint of ankle 27 and toe 31)
-        const lmA27 = landmarks[27];
-        const lmT31 = landmarks[31] || lmA27;
-        if (lmA27 && (lmA27.visibility === undefined || lmA27.visibility >= 0.05)) {
-          targets.push({
-            x: (lmA27.x + lmT31.x) / 2,
-            y: (lmA27.y + lmT31.y) / 2,
-            label: 'foot_l',
-            baseRadius: 42
-          });
-        }
-
-        // 5. Right Foot (Foot/Toes: midpoint of ankle 28 and toe 32)
-        const lmA28 = landmarks[28];
-        const lmT32 = landmarks[32] || lmA28;
-        if (lmA28 && (lmA28.visibility === undefined || lmA28.visibility >= 0.05)) {
-          targets.push({
-            x: (lmA28.x + lmT32.x) / 2,
-            y: (lmA28.y + lmT32.y) / 2,
-            label: 'foot_r',
-            baseRadius: 42
-          });
-        }
-
-        return targets;
-      };
-
-      const Bodies = Matter.Bodies;
-      const World = Matter.World;
-      const scaleFactor = Math.max(0.65, Math.min(1.0, w / 1000));
-
-      poses.forEach((landmarks, poseIdx) => {
-        if (poseIdx >= 4) return; // Up to 4 players
-        const color = playerColors[poseIdx];
-        const targets = getTargetPoints(landmarks);
-
-        targets.forEach((target) => {
-          // Compute mirrored screen coordinates: (1 - target.x) * w
-          const lx = (1 - target.x) * w;
-          const ly = target.y * h;
-          const r = Math.round(target.baseRadius * scaleFactor);
-          const key = `P_${poseIdx}_${target.label}`;
-
-          activeSensorKeys.add(key);
-
-          // Update or create Matter.js physical sensor body (strictly matched to visual circle radius r)
-          let sensor = this.sensorPool[key];
-          if (!sensor || sensor.targetRadius !== r) {
-            if (sensor) {
-              World.remove(this.physicsWorld, sensor);
-            }
-            sensor = Bodies.circle(lx, ly, r, {
-              isStatic: true,
-              isSensor: true,
-              label: key
-            });
-            sensor.isPlayerSensor = true;
-            sensor.targetRadius = r;
-            this.sensorPool[key] = sensor;
-            World.add(this.physicsWorld, sensor);
-          } else {
-            Matter.Body.setPosition(sensor, { x: lx, y: ly });
-          }
-
-          // Draw ONLY collision range circle around Head, Hands, and Feet
-          this.ctx.save();
-
-          // Translucent fill showing collision area
-          this.ctx.fillStyle = color;
-          this.ctx.globalAlpha = 0.25;
-          this.ctx.beginPath();
-          this.ctx.arc(lx, ly, r, 0, Math.PI * 2);
-          this.ctx.fill();
-
-          // Neon glowing border
-          this.ctx.globalAlpha = 1.0;
-          this.ctx.strokeStyle = color;
-          this.ctx.lineWidth = 3;
-          this.ctx.shadowColor = color;
-          this.ctx.shadowBlur = 12;
-          this.ctx.stroke();
-
-          // Center white indicator point
-          this.ctx.fillStyle = '#ffffff';
-          this.ctx.shadowBlur = 0;
-          this.ctx.beginPath();
-          this.ctx.arc(lx, ly, 6, 0, Math.PI * 2);
-          this.ctx.fill();
-
-          this.ctx.restore();
+        sensor = Bodies.circle(lx, ly, r, {
+          isStatic: true,
+          isSensor: true,
+          label: key
         });
+        sensor.isPlayerSensor = true;
+        sensor.targetRadius = r;
+        this.sensorPool[key] = sensor;
+        World.add(this.physicsWorld, sensor);
+      } else {
+        Matter.Body.setPosition(sensor, { x: lx, y: ly });
+      }
+
+      // Draw glowing circle around collision zone
+      this.ctx.save();
+      this.ctx.fillStyle = color;
+      this.ctx.globalAlpha = 0.25;
+      this.ctx.beginPath();
+      this.ctx.arc(lx, ly, r, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      // Neon glowing border
+      this.ctx.globalAlpha = 1.0;
+      this.ctx.strokeStyle = color;
+      this.ctx.lineWidth = 3;
+      this.ctx.shadowColor = color;
+      this.ctx.shadowBlur = 12;
+      this.ctx.stroke();
+
+      // Center white indicator point
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.shadowBlur = 0;
+      this.ctx.beginPath();
+      this.ctx.arc(lx, ly, 6, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.restore();
+    };
+
+    // 1. Multi-Hand Tracking (detects hands for Player 1, Player 2, Player 3, Player 4!)
+    let hasHands = false;
+    if (this.latestHandsResults && this.latestHandsResults.multiHandLandmarks && this.latestHandsResults.multiHandLandmarks.length > 0) {
+      hasHands = true;
+      const hands = this.latestHandsResults.multiHandLandmarks;
+
+      hands.forEach((handLm, idx) => {
+        if (idx >= 8) return;
+        const lm0 = handLm[0];
+        const lm9 = handLm[9] || lm0;
+        if (!lm0) return;
+
+        // Palm center: midpoint of wrist and middle finger knuckle
+        const hx = (lm0.x + lm9.x) / 2;
+        const hy = (lm0.y + lm9.y) / 2;
+
+        const lx = (1 - hx) * w;
+        const ly = hy * h;
+        const r = Math.round(42 * scaleFactor);
+
+        // Assign player color based on screen horizontal position (Left side = P1 cyan, Right side = P2 pink)
+        const playerIdx = lx < w * 0.5 ? 0 : 1;
+        const color = playerColors[playerIdx];
+        const key = `Hand_${idx}`;
+
+        renderSensorCircle(key, lx, ly, r, color);
       });
+    }
+
+    // 2. Pose Tracking (Head, Feet, and fallback Hands if MediaPipe Hands is loading)
+    if (this.latestPoseResults && this.latestPoseResults.poseLandmarks) {
+      const lm = this.latestPoseResults.poseLandmarks;
+
+      // Head (Face/Forehead)
+      if (lm[0] && (lm[0].visibility === undefined || lm[0].visibility >= 0.05)) {
+        const lx = (1 - lm[0].x) * w;
+        const ly = Math.max(0, lm[0].y - 0.035) * h;
+        const r = Math.round(46 * scaleFactor);
+        renderSensorCircle('Pose_head', lx, ly, r, playerColors[0]);
+      }
+
+      // Left Foot (Ankle 27 & Toe 31)
+      if (lm[27] && (lm[27].visibility === undefined || lm[27].visibility >= 0.05)) {
+        const toe = lm[31] || lm[27];
+        const lx = (1 - (lm[27].x + toe.x) / 2) * w;
+        const ly = ((lm[27].y + toe.y) / 2) * h;
+        const r = Math.round(42 * scaleFactor);
+        renderSensorCircle('Pose_foot_l', lx, ly, r, playerColors[0]);
+      }
+
+      // Right Foot (Ankle 28 & Toe 32)
+      if (lm[28] && (lm[28].visibility === undefined || lm[28].visibility >= 0.05)) {
+        const toe = lm[32] || lm[28];
+        const lx = (1 - (lm[28].x + toe.x) / 2) * w;
+        const ly = ((lm[28].y + toe.y) / 2) * h;
+        const r = Math.round(42 * scaleFactor);
+        renderSensorCircle('Pose_foot_r', lx, ly, r, playerColors[0]);
+      }
+
+      // Fallback Hands from Pose if multi-hand model hasn't returned yet
+      if (!hasHands) {
+        if (lm[15] && (lm[15].visibility === undefined || lm[15].visibility >= 0.05)) {
+          const indexLm = lm[19] || lm[15];
+          const lx = (1 - (lm[15].x + indexLm.x) / 2) * w;
+          const ly = ((lm[15].y + indexLm.y) / 2) * h;
+          const r = Math.round(42 * scaleFactor);
+          renderSensorCircle('Pose_hand_l', lx, ly, r, playerColors[0]);
+        }
+        if (lm[16] && (lm[16].visibility === undefined || lm[16].visibility >= 0.05)) {
+          const indexLm = lm[20] || lm[16];
+          const lx = (1 - (lm[16].x + indexLm.x) / 2) * w;
+          const ly = ((lm[16].y + indexLm.y) / 2) * h;
+          const r = Math.round(42 * scaleFactor);
+          renderSensorCircle('Pose_hand_r', lx, ly, r, playerColors[0]);
+        }
+      }
     }
 
     // Hide any sensors that were not detected in this frame offscreen
