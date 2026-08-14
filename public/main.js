@@ -690,25 +690,46 @@ class App {
           this.offscreenCanvas.height = height;
         }
 
+        // Fast intermediate mask canvas for luminance-to-alpha extraction (320x180 for 0.2ms speed)
+        if (!this.maskCanvas) {
+          this.maskCanvas = document.createElement('canvas');
+          this.maskCanvas.width = 320;
+          this.maskCanvas.height = 180;
+          this.maskCtx = this.maskCanvas.getContext('2d', { willReadFrequently: true });
+        }
+
+        // 1. Draw segmentation mask and convert luminance (Red channel) to true Alpha channel
+        const maskW = 320;
+        const maskH = 180;
+        this.maskCtx.clearRect(0, 0, maskW, maskH);
+        this.maskCtx.drawImage(this.latestSegmentationResults.segmentationMask, 0, 0, maskW, maskH);
+
+        const maskImageData = this.maskCtx.getImageData(0, 0, maskW, maskH);
+        const data = maskImageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+          // In MediaPipe Pose, the person probability mask is in the Red/RGB channel.
+          // Set Alpha equal to the Red intensity to create a real transparent mask!
+          data[i + 3] = data[i];
+        }
+        this.maskCtx.putImageData(maskImageData, 0, 0);
+
+        // 2. Draw mirrored video to offscreen canvas
         const oCtx = this.offscreenCtx;
         oCtx.clearRect(0, 0, width, height);
 
         const frameImg = this.latestSegmentationResults.image || this.video;
 
-        // Draw mask & video mirrored onto offscreen canvas
         oCtx.save();
         oCtx.translate(width, 0);
         oCtx.scale(-1, 1);
-        
-        // Draw segmentation mask (white silhouette on transparent canvas)
-        oCtx.drawImage(this.latestSegmentationResults.segmentationMask, 0, 0, width, height);
-        
-        // Crop video into silhouette
-        oCtx.globalCompositeOperation = 'source-in';
         oCtx.drawImage(frameImg, 0, 0, width, height);
+
+        // 3. Cut out background using destination-in composite
+        oCtx.globalCompositeOperation = 'destination-in';
+        oCtx.drawImage(this.maskCanvas, 0, 0, width, height);
         oCtx.restore();
 
-        // Draw the mirrored person cut-out onto main canvas over theme background!
+        // 4. Draw cleanly cut-out person onto main canvas over theme background!
         this.ctx.drawImage(this.offscreenCanvas, 0, 0, width, height);
         drewCutout = true;
       } catch (err) {
