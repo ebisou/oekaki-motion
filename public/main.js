@@ -642,6 +642,33 @@ class App {
         console.warn("Draw canvas warning:", err);
       }
 
+      // Multi-Player Collision Check: Sample item center against offscreen person cutout mask
+      // Allows 2+ players (Player 1, Player 2, Player 3, Player 4) to hit items with hands/head/feet/body!
+      if (this.isPlaying && this.offscreenCtx) {
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+
+        this.physicsItems.forEach((item) => {
+          if (item.gameMeta && !item.gameMeta.hit) {
+            const ix = Math.floor(item.position.x);
+            const iy = Math.floor(item.position.y);
+
+            if (ix >= 0 && ix < w && iy >= 0 && iy < h) {
+              try {
+                const pixel = this.offscreenCtx.getImageData(ix, iy, 1, 1).data;
+                // pixel[3] > 50 indicates an active player cutout pixel on the canvas!
+                if (pixel && pixel[3] > 50) {
+                  item.gameMeta.hit = true;
+                  this.handleItemHit(item);
+                }
+              } catch (e) {
+                // ignore image data read errors
+              }
+            }
+          }
+        });
+      }
+
       requestAnimationFrame(loop);
     };
 
