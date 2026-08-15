@@ -1026,33 +1026,120 @@ body {
   }
 }
 
-/* Landscape Mode on Smartphones */
-@media (max-width: 900px) and (orientation: landscape) {
+/* ================= ULTRA-COMPACT MOBILE LANDSCAPE MODE ================= */
+@media (max-width: 950px) and (orientation: landscape), (max-height: 550px) and (orientation: landscape) {
+  #pc-view {
+    height: 100vh;
+    overflow: hidden;
+  }
+
   .game-header {
-    position: relative;
-    padding: 6px 12px;
+    flex-direction: row !important;
+    height: 44px !important;
+    padding: 0 10px !important;
+    gap: 8px !important;
+  }
+
+  .header-left .brand {
+    gap: 6px;
+  }
+
+  .brand-icon {
+    font-size: 16px;
+  }
+
+  .brand-text h1 {
+    font-size: 13px;
+  }
+
+  .header-center {
+    width: auto !important;
+    gap: 8px !important;
+  }
+
+  .stat-badge {
+    padding: 2px 8px !important;
+    gap: 6px !important;
+    border-radius: 8px !important;
+  }
+
+  .stat-badge .stat-label {
+    font-size: 10px !important;
+  }
+
+  .stat-badge .stat-value {
+    font-size: 15px !important;
+  }
+
+  .header-right {
+    width: auto !important;
+    flex-direction: row !important;
+    gap: 6px !important;
+  }
+
+  .control-group {
+    width: auto !important;
+    gap: 4px !important;
+  }
+
+  .control-group .btn {
+    padding: 4px 8px !important;
+    font-size: 11px !important;
+    border-radius: 6px !important;
+  }
+
+  .theme-selector {
+    width: auto !important;
+    padding: 2px !important;
+    gap: 2px !important;
+  }
+
+  .theme-btn {
+    padding: 3px 6px !important;
+    font-size: 10px !important;
   }
 
   .game-main {
-    padding: 4px;
+    flex-direction: row !important;
+    height: calc(100vh - 44px) !important;
+    padding: 4px 8px !important;
+    gap: 8px !important;
+    overflow: hidden !important;
   }
 
   .canvas-wrapper {
-    height: 70vh;
-    max-height: 70vh;
+    flex: 1 !important;
+    width: auto !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    aspect-ratio: auto !important;
+    border-radius: 12px !important;
   }
-}
 
-/* Responsive adjustments */
-@media (max-width: 900px) {
-  .game-main {
-    flex-direction: column;
-  }
   .side-panel {
-    width: 100%;
-    flex-direction: row;
+    width: 140px !important;
+    max-width: 140px !important;
+    height: 100% !important;
+    overflow-y: auto !important;
   }
+
+  .qr-accordion summary {
+    font-size: 11px !important;
+    padding: 6px !important;
+  }
+
+  .qr-accordion[open] .qr-cards-wrapper {
+    flex-direction: column !important;
+    padding: 4px !important;
+    gap: 6px !important;
+  }
+
   .qr-card {
-    flex: 1;
+    padding: 6px !important;
+  }
+
+  .qr-code canvas, .qr-code img {
+    max-width: 65px !important;
+    max-height: 65px !important;
   }
 }

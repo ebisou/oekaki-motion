@@ -158,6 +158,10 @@ class App {
 
     this.resizeCanvas();
     window.addEventListener('resize', () => this.resizeCanvas());
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => this.resizeCanvas(), 150);
+      setTimeout(() => this.resizeCanvas(), 400);
+    });
 
     // Setup QR Codes
     this.setupQRCodes();
