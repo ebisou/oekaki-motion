@@ -266,36 +266,50 @@ class App {
       btn.classList.toggle('active', btn.dataset.theme === theme);
     });
 
-    // Scale gravity non-linearly with canvas height so small mobile screens don't drop items rapidly
-    const ratio = Math.min(1.0, (this.canvas.height || 720) / 720);
-    const heightScale = Math.pow(ratio, 1.8);
+    this.applyThemePhysics();
 
     if (theme === 'sea') {
-      this.physicsWorld.gravity.y = 0.012 * heightScale; // Ultra-gentle underwater drift
-      this.physicsWorld.gravity.x = 0;
-      this.updatePhysicsBoundaries();
       toastIcon.className = 'fa-solid fa-water';
       toastText.textContent = '海モード (低重力・くらげ風ゆったり浮遊)';
     } else if (theme === 'grass') {
-      this.physicsWorld.gravity.y = 0.025 * heightScale; // Gentle uniform falling speed
-      this.physicsWorld.gravity.x = 0;
-      this.updatePhysicsBoundaries();
       toastIcon.className = 'fa-solid fa-tree';
       toastText.textContent = '草原モード (標準重力・ゆったり均一落下)';
     } else if (theme === 'space') {
-      this.physicsWorld.gravity.y = 0.0;
-      this.physicsWorld.gravity.x = 0;
-      // Remove solid walls in space mode so items fly straight through outer borders
-      if (this.boundaries) {
-        Matter.World.remove(this.physicsWorld, this.boundaries);
-        this.boundaries = null;
-      }
       toastIcon.className = 'fa-solid fa-user-astronaut';
       toastText.textContent = '宇宙モード (全方向無減速スルー)';
     }
 
     toast.style.opacity = '1';
     setTimeout(() => { toast.style.opacity = '0.8'; }, 2000);
+  }
+
+  // Dynamic Theme Physics with Time-based Progressive Speed Acceleration
+  applyThemePhysics() {
+    const theme = this.currentTheme || 'sea';
+    const ratio = Math.min(1.0, (this.canvas.height || 720) / 720);
+    const heightScale = Math.pow(ratio, 1.8);
+
+    // Time-based speed multiplier: 1.0x at 0s -> 2.5x at 60s
+    const elapsedSeconds = this.isPlaying ? Math.max(0, Math.min(60, 60 - this.timer)) : 0;
+    const speedProgress = elapsedSeconds / 60; // 0.0 to 1.0
+    const speedMultiplier = 1.0 + speedProgress * 1.5; // Smoothly increases from 1.0x to 2.5x
+
+    if (theme === 'sea') {
+      this.physicsWorld.gravity.y = 0.012 * heightScale * speedMultiplier;
+      this.physicsWorld.gravity.x = 0;
+      this.updatePhysicsBoundaries();
+    } else if (theme === 'grass') {
+      this.physicsWorld.gravity.y = 0.025 * heightScale * speedMultiplier;
+      this.physicsWorld.gravity.x = 0;
+      this.updatePhysicsBoundaries();
+    } else if (theme === 'space') {
+      this.physicsWorld.gravity.y = 0.0;
+      this.physicsWorld.gravity.x = 0;
+      if (this.boundaries) {
+        Matter.World.remove(this.physicsWorld, this.boundaries);
+        this.boundaries = null;
+      }
+    }
   }
 
   // Create Physics Item from Base64 Image or Canvas
@@ -313,6 +327,11 @@ class App {
     const ratio = Math.min(1.0, height / 720);
     const heightScale = Math.pow(ratio, 1.8);
 
+    // Progressive speed scaling based on elapsed game time
+    const elapsedSeconds = this.isPlaying ? Math.max(0, Math.min(60, 60 - this.timer)) : 0;
+    const speedProgress = elapsedSeconds / 60;
+    const speedMultiplier = 1.0 + speedProgress * 1.5;
+
     const isSpace = this.currentTheme === 'space';
 
     let x, y, vx, vy;
@@ -320,7 +339,7 @@ class App {
     if (isSpace) {
       // Pick one of 4 outer edges at random: 0: Top, 1: Right, 2: Bottom, 3: Left
       const side = Math.floor(Math.random() * 4);
-      const speed = (Math.random() * 0.6 + 1.5) * Math.max(0.4, heightScale);
+      const speed = (Math.random() * 0.6 + 1.5) * Math.max(0.4, heightScale) * speedMultiplier;
 
       if (side === 0) { // Top -> Flying Down
         x = Math.random() * Math.max(60, width - 120) + 60;
@@ -344,11 +363,11 @@ class App {
         vy = (Math.random() - 0.5) * 0.8;
       }
     } else {
-      // Normal top drop for Sea and Grassland (start at y = 5 with zero initial velocity to avoid top-half acceleration burst)
+      // Normal top drop for Sea and Grassland (initial velocity scales slightly with elapsed time)
       x = Math.random() * Math.max(60, width - 120) + 60;
       y = 5;
       vx = (Math.random() - 0.5) * 0.2;
-      vy = 0.0; // Zero initial downward velocity for smooth top-half drift
+      vy = speedProgress * 1.2 * heightScale;
     }
 
     const options = {
@@ -447,8 +466,14 @@ class App {
 
     const scheduleNext = () => {
       if (!this.isPlaying) return;
-      // Fast drop interval: 600ms to 1300ms for continuous thrill
-      const delay = Math.random() * 700 + 600;
+      const elapsedSeconds = Math.max(0, Math.min(60, 60 - this.timer));
+      const speedProgress = elapsedSeconds / 60; // 0.0 -> 1.0
+
+      // Dynamic spawn interval: gets progressively faster as speed increases
+      const minDelay = 600 - speedProgress * 250;
+      const maxDelay = 1300 - speedProgress * 550;
+      const delay = Math.random() * (maxDelay - minDelay) + minDelay;
+
       this.spawnerTimeout = setTimeout(() => {
         if (this.isPlaying) {
           this.spawnRandomItem();
@@ -641,12 +666,21 @@ class App {
       if (this.isPlaying) {
         physicsAccumulator += delta;
 
-        // Scale max speed limit relative to screen height
+        // Dynamically update theme gravity based on elapsed time
+        this.applyThemePhysics();
+
+        // Calculate dynamic speed multiplier (1.0x at 0s -> 2.5x at 60s)
+        const elapsedSeconds = Math.max(0, Math.min(60, 60 - this.timer));
+        const speedProgress = elapsedSeconds / 60; // 0.0 to 1.0
+        const speedMultiplier = 1.0 + speedProgress * 1.5;
+
+        // Scale max speed limit relative to screen height and elapsed time
         const heightScale = Math.max(0.3, Math.min(1.0, (this.canvas.height || 720) / 720));
-        const maxVy = this.currentTheme === 'sea' ? (1.0 * heightScale) : (1.6 * heightScale);
+        const baseMaxVy = this.currentTheme === 'sea' ? (1.0 * heightScale) : (1.6 * heightScale);
+        const maxVy = baseMaxVy * speedMultiplier;
 
         while (physicsAccumulator >= fixedTimestep) {
-          // Clamp downward falling speed so items never shoot down fast on any device
+          // Clamp downward falling speed so items accelerate progressively with maxVy
           if (this.currentTheme !== 'space' && this.physicsItems) {
             this.physicsItems.forEach((body) => {
               if (body.velocity.y > maxVy) {
@@ -1108,6 +1142,9 @@ class App {
     this.timer = 60;
     document.getElementById('score-display').textContent = '0';
     document.getElementById('timer-display').textContent = '60';
+
+    // Reset physics speed and gravity back to baseline 1.0x
+    this.applyThemePhysics();
 
     // Clear all items from physics world
     this.physicsItems.forEach(item => Matter.World.remove(this.physicsWorld, item));
