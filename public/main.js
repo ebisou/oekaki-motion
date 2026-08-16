@@ -172,6 +172,10 @@ class App {
     // Setup Controls & UI Events
     this.setupPCEvents();
 
+    // Set initial player count (Default: 1 Player Mode for max 60FPS precision)
+    this.playerCount = 1;
+    this.setPlayerCount(1);
+
     // Set initial theme
     this.setTheme('sea');
 
@@ -180,6 +184,54 @@ class App {
 
     // Initialize PeerJS Host
     this.initPCHostPeer();
+  }
+
+  setPlayerCount(count) {
+    this.playerCount = Math.max(1, Math.min(4, parseInt(count, 10) || 1));
+
+    // Update UI button states
+    document.querySelectorAll('.player-count-btn').forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.players, 10) === this.playerCount);
+    });
+
+    // Update Player Tag legends in overlay (P1..P4)
+    for (let i = 1; i <= 4; i++) {
+      const tag = document.querySelector(`.player-tag.p${i}`);
+      if (tag) {
+        tag.classList.toggle('active', i <= this.playerCount);
+      }
+    }
+
+    // Dynamically reconfigure MediaPipe Tasks Vision PoseLandmarker
+    if (this.poseLandmarker && typeof this.poseLandmarker.setOptions === 'function') {
+      try {
+        this.poseLandmarker.setOptions({ numPoses: this.playerCount });
+        console.log(`MediaPipe numPoses dynamically updated to ${this.playerCount}`);
+      } catch (err) {
+        console.warn("setOptions numPoses warning:", err);
+      }
+    }
+
+    // Immediately hide any sensors for inactive player slots offscreen
+    if (this.sensorPool) {
+      Object.keys(this.sensorPool).forEach((key) => {
+        const pNum = parseInt(key.substring(1, 2), 10);
+        if (pNum > this.playerCount) {
+          Matter.Body.setPosition(this.sensorPool[key], { x: -9999, y: -9999 });
+        }
+      });
+    }
+
+    // Show toast notification
+    const toast = document.getElementById('theme-toast');
+    const toastIcon = document.getElementById('theme-toast-icon');
+    const toastText = document.getElementById('theme-toast-text');
+    if (toast && toastText) {
+      toastIcon.className = this.playerCount === 1 ? 'fa-solid fa-user' : 'fa-solid fa-user-group';
+      toastText.textContent = `👥 ${this.playerCount}人プレイモード (AI最適化)`;
+      toast.style.opacity = '1';
+      setTimeout(() => { toast.style.opacity = '0.8'; }, 2000);
+    }
   }
 
   resizeCanvas() {
@@ -551,13 +603,13 @@ class App {
             delegate: "GPU"
           },
           runningMode: "VIDEO",
-          numPoses: 4,
+          numPoses: this.playerCount || 1,
           outputSegmentationMasks: true,
           minPoseDetectionConfidence: 0.25,
           minPosePresenceConfidence: 0.25,
           minTrackingConfidence: 0.25
         });
-        console.log("MediaPipe Tasks Vision PoseLandmarker (Full Model) initialized for 4 players!");
+        console.log(`MediaPipe Tasks Vision PoseLandmarker initialized (numPoses: ${this.playerCount || 1})!`);
       } catch (err) {
         console.warn("PoseLandmarker init warning:", err);
       }
@@ -973,7 +1025,7 @@ class App {
         });
 
       sortedPoses.forEach((lm, pIdx) => {
-        if (pIdx >= 4 || !lm) return;
+        if (pIdx >= this.playerCount || !lm) return;
         const color = playerColors[pIdx];
         const prefix = `P${pIdx + 1}`;
 
@@ -1089,6 +1141,14 @@ class App {
     if (btnToggleCam) {
       btnToggleCam.addEventListener('click', () => this.toggleWebcam());
     }
+
+    // Player Count Selector Buttons
+    document.querySelectorAll('.player-count-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const count = parseInt(e.currentTarget.dataset.players, 10);
+        this.setPlayerCount(count);
+      });
+    });
 
     // Theme Selector Buttons
     document.querySelectorAll('.theme-btn').forEach(btn => {
