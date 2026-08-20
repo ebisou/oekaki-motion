@@ -325,7 +325,7 @@ class App {
       toastText.textContent = '海モード (低重力・くらげ風ゆったり浮遊)';
     } else if (theme === 'grass') {
       toastIcon.className = 'fa-solid fa-tree';
-      toastText.textContent = '草原モード (標準重力・ゆったり均一落下)';
+      toastText.textContent = '草原モード (アクティブ重力・ハイスピード落下)';
     } else if (theme === 'space') {
       toastIcon.className = 'fa-solid fa-user-astronaut';
       toastText.textContent = '宇宙モード (全方向無減速スルー)';
@@ -351,7 +351,7 @@ class App {
       this.physicsWorld.gravity.x = 0;
       this.updatePhysicsBoundaries();
     } else if (theme === 'grass') {
-      this.physicsWorld.gravity.y = 0.025 * heightScale * speedMultiplier;
+      this.physicsWorld.gravity.y = 0.055 * heightScale * speedMultiplier; // Significantly boosted gravity for fast dynamic action
       this.physicsWorld.gravity.x = 0;
       this.updatePhysicsBoundaries();
     } else if (theme === 'space') {
@@ -414,17 +414,23 @@ class App {
         vx = speed;
         vy = (Math.random() - 0.5) * 0.8;
       }
+    } else if (this.currentTheme === 'grass') {
+      // Brisk downward drop for Grassland mode
+      x = Math.random() * Math.max(60, width - 120) + 60;
+      y = 5;
+      vx = (Math.random() - 0.5) * 0.6;
+      vy = (1.8 + speedProgress * 3.0) * heightScale;
     } else {
-      // Normal top drop for Sea and Grassland (initial velocity scales slightly with elapsed time)
+      // Normal gentle top drop for Sea mode
       x = Math.random() * Math.max(60, width - 120) + 60;
       y = 5;
       vx = (Math.random() - 0.5) * 0.2;
-      vy = speedProgress * 1.2 * heightScale;
+      vy = speedProgress * 0.8 * heightScale;
     }
 
     const options = {
-      restitution: this.currentTheme === 'grass' ? 0.7 : 0.5,
-      frictionAir: isSpace ? 0.0 : (this.currentTheme === 'sea' ? 0.02 : 0.015),
+      restitution: this.currentTheme === 'grass' ? 0.75 : 0.5,
+      frictionAir: isSpace ? 0.0 : (this.currentTheme === 'sea' ? 0.02 : 0.005),
       friction: isSpace ? 0.0 : 0.1,
       density: 0.001
     };
@@ -728,7 +734,7 @@ class App {
 
         // Scale max speed limit relative to screen height and elapsed time
         const heightScale = Math.max(0.3, Math.min(1.0, (this.canvas.height || 720) / 720));
-        const baseMaxVy = this.currentTheme === 'sea' ? (1.0 * heightScale) : (1.6 * heightScale);
+        const baseMaxVy = this.currentTheme === 'sea' ? (1.0 * heightScale) : (3.8 * heightScale);
         const maxVy = baseMaxVy * speedMultiplier;
 
         while (physicsAccumulator >= fixedTimestep) {
